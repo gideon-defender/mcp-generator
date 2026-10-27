@@ -410,7 +410,7 @@ export function checkResponses({
       code: 'RESPONSE_NO_SUCCESS',
       severity: 'warning',
       category: 'response',
-      message: 'Operation declares no 2xx or default response',
+      message: 'Operation declares no 2xx, 3xx, or default response',
       location,
       ...context,
     });
@@ -420,12 +420,15 @@ export function checkResponses({
   const statuses = Object.keys(responses as JsonObject).filter(
     (status) => !status.startsWith('x-'),
   );
-  if (!statuses.some((status) => /^2\d\d$|^2XX$|^default$/i.test(status))) {
+  // A redirect (3xx) is a terminal success for OAuth/SAML-style flows
+  // (authorize/SSO redirects) that never return a 2xx; treat it the same
+  // as a 2xx or default for this check.
+  if (!statuses.some((status) => /^[23]\d\d$|^[23]XX$|^default$/i.test(status))) {
     push({
       code: 'RESPONSE_NO_SUCCESS',
       severity: 'warning',
       category: 'response',
-      message: 'Operation declares no 2xx or default response',
+      message: 'Operation declares no 2xx, 3xx, or default response',
       location,
       ...context,
     });

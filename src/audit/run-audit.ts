@@ -79,6 +79,17 @@ export async function runAudit({
     budget.add({ value: finding });
     findings.push(finding);
   }
+  for (const message of loaded.flowCommaIssues) {
+    const finding: Finding = {
+      code: 'SPEC_YAML_FLOW_COMMA',
+      severity: 'warning',
+      category: 'spec',
+      message,
+      location: '(document)',
+    };
+    budget.add({ value: finding });
+    findings.push(finding);
+  }
   for (const finding of entryFindings) {
     budget.add({ value: finding });
     findings.push(finding);

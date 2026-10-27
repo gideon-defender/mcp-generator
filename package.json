@@ -20,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "audit": "node --import tsx src/cli.ts audit",
+    "audit:check-drift": "node --import tsx scripts/check-audit-drift.ts",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
