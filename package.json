@@ -1,0 +1,35 @@
+{
+  "name": "@gideon/mcp-generator",
+  "version": "0.1.0",
+  "description": "Standalone OpenAPI 3.0+ to MCP generator. Phase 0: contract and reuse audit for any OpenAPI 3.0 or later specification.",
+  "type": "module",
+  "bin": {
+    "mcp-generator": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "audit": "node --import tsx src/cli.ts audit",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}

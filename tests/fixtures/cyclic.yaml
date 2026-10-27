@@ -1,0 +1,25 @@
+openapi: 3.1.0
+info:
+  title: Cyclic API
+  version: 1.0.0
+servers:
+  - url: https://cyclic.example.test
+paths:
+  /v1/nodes:
+    get:
+      operationId: getNode
+      summary: Get node
+      description: Returns a self-referencing node.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Loop'
+components:
+  schemas:
+    Loop: &loop
+      type: object
+      properties:
+        self: *loop

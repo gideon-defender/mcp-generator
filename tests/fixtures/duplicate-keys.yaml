@@ -1,0 +1,21 @@
+openapi: 3.1.0
+info:
+  title: Duplicate Keys API
+  version: 1.0.0
+servers:
+  - url: https://dup.example.test
+paths:
+  /v1/things:
+    get:
+      operationId: listThings
+      summary: First definition
+      description: Shadowed by the duplicate key below.
+      responses:
+        '200': { description: OK }
+  /v1/things:
+    get:
+      operationId: listThingsV2
+      summary: Second definition
+      description: Wins under later-value-wins parsing.
+      responses:
+        '200': { description: OK }

@@ -1,0 +1,7 @@
+dist/
+pnpm-lock.yaml
+# Test inputs are verbatim fixtures (incl. intentionally malformed specs).
+tests/fixtures/
+# Generated audit output.
+audits/*/report.json
+audits/*/report.md

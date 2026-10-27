@@ -1,0 +1,33 @@
+openapi: 3.1.0
+info:
+  title: Identity API
+  version: 2.0.0
+servers:
+  - url: https://auth.example.test
+paths:
+  /v1/admin/users:
+    get:
+      operationId: listAdminUsers
+      summary: List admin users
+      description: List users with 3.1 schema features.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: [string, "null"]
+                  score:
+                    type: number
+                    exclusiveMinimum: 0
+                  kind:
+                    const: admin
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
