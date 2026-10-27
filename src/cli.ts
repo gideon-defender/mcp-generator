@@ -21,24 +21,46 @@ import { fileURLToPath } from 'node:url';
 import { renderMarkdown, sanitizeInline } from './audit/report.js';
 import { runAudit } from './audit/run-audit.js';
 import type { AuditReport } from './audit/types.js';
+import { runStart } from './cli/start.js';
 
-const HELP = `mcp-generator — OpenAPI 3.0+ to MCP (Phase 0: audit)
+const HELP = `mcp-generator — OpenAPI 3.0+ to MCP
 
 Usage:
   mcp-generator audit --spec <openapi.json|yaml> [--docs <path>]... [--out <dir>] [--strict]
+  mcp-generator start --spec <openapi.json|yaml> --name <name> --version <version>
+                      [--overlay <path>] [--server-url <url>] [--tool <name>]...
+                      [--mode static|dynamic] [--apikey <key> | --bearer <token>] [--timeout <ms>]
 
-Options:
+audit:
   --spec <path>     OpenAPI 3.0.x or 3.1.x document (JSON or YAML). Required.
   --docs <path>     Extra docs (file or directory of .md/.mdx/.txt) to cross-reference
                     against the spec. Repeatable.
   --out <dir>       Output directory for report.json + report.md.
                     Default: audits/<spec-file-name>
   --strict          Exit 1 when the audit readiness is "blocked".
-  --help            Show this help.
 
 The audit inventories every operation, derives a generic tool name, classifies
 read/mutate, and catalogues blockers, OpenAPI 3.1 constructs, and policy
 warnings that condition faithful MCP generation. It never modifies the spec.
+
+start:
+  --spec <path>       OpenAPI 3.0.x document (JSON or YAML). Required.
+  --overlay <path>    Owned overlay document (JSON or YAML). Default: no overlay.
+  --name <name>       MCP server name reported to clients. Required.
+  --version <version> MCP server version reported to clients. Required.
+  --mode <mode>       "static" (one tool per operation) or "dynamic"
+                      (list_tools/describe_tool_input/execute_tool). Default: static.
+  --tool <name>       Expose only this tool. Repeatable; default is every tool.
+  --server-url <url>  Override the spec's declared server URL.
+  --apikey <key>      Static API key, sent as X-API-Key. Falls back to
+                      MCP_GENERATOR_APIKEY. Mutually exclusive with --bearer.
+  --bearer <token>    Static bearer token, sent as Authorization. Falls back to
+                      MCP_GENERATOR_BEARER_TOKEN. Mutually exclusive with --apikey.
+  --timeout <ms>      Per-request deadline in milliseconds. Default: 120000.
+
+Connects over stdio and runs until the client disconnects.
+
+  --help            Show this help.
 `;
 
 async function lstatOrUndefined(
@@ -391,6 +413,15 @@ async function main(): Promise<void> {
       docs: { type: 'string', multiple: true },
       out: { type: 'string' },
       strict: { type: 'boolean', default: false },
+      overlay: { type: 'string' },
+      name: { type: 'string' },
+      version: { type: 'string' },
+      mode: { type: 'string' },
+      tool: { type: 'string', multiple: true },
+      'server-url': { type: 'string' },
+      apikey: { type: 'string' },
+      bearer: { type: 'string' },
+      timeout: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -398,7 +429,7 @@ async function main(): Promise<void> {
   if (values.help) {
     // Help wins only for a valid or absent command. `bogus --help` is a bad
     // invocation, not a help request.
-    if (command !== undefined && command !== 'audit') {
+    if (command !== undefined && command !== 'audit' && command !== 'start') {
       throw new Error(`Unknown command: ${command}`);
     }
     process.stdout.write(HELP);
@@ -406,19 +437,18 @@ async function main(): Promise<void> {
   }
   if (positionals.length === 0) {
     // Bare invocation prints help. Flags without a command are an error:
-    // exiting 0 would tell a script that an audit ran when none did.
-    const hasFlags =
-      values.spec !== undefined ||
-      values.docs !== undefined ||
-      values.out !== undefined ||
-      values.strict;
-    if (hasFlags) throw new Error('Missing command: expected "audit"');
+    // exiting 0 would tell a script that a command ran when none did.
+    const hasFlags = Object.entries(values).some(
+      ([key, value]) => key !== 'help' && value !== undefined && value !== false,
+    );
+    if (hasFlags) throw new Error('Missing command: expected "audit" or "start"');
     process.stdout.write(HELP);
     return;
   }
   if (positionals.length > 1) {
     throw new Error(`Unexpected extra arguments: ${positionals.slice(1).join(' ')}`);
   }
+  if (command === 'start') return runStartCommand({ values });
   if (command !== 'audit') throw new Error(`Unknown command: ${command ?? ''}`);
   if (!values.spec || values.spec.trim() === '') throw new Error('Missing --spec <path>');
   // resolve('') returns the working directory. An empty --docs scans that
@@ -459,6 +489,51 @@ async function main(): Promise<void> {
       `Reports: ${resolve(outDir, 'report.md')} · ${resolve(outDir, 'report.json')}\n`,
   );
   if (values.strict && summary.readiness === 'blocked') process.exitCode = 1;
+}
+
+async function runStartCommand({
+  values,
+}: {
+  values: {
+    spec?: string;
+    overlay?: string;
+    name?: string;
+    version?: string;
+    mode?: string;
+    tool?: string[];
+    'server-url'?: string;
+    apikey?: string;
+    bearer?: string;
+    timeout?: string;
+  };
+}): Promise<void> {
+  if (!values.spec || values.spec.trim() === '') throw new Error('Missing --spec <path>');
+  if (!values.name || values.name.trim() === '') throw new Error('Missing --name <name>');
+  if (!values.version || values.version.trim() === '')
+    throw new Error('Missing --version <version>');
+  if (values.mode !== undefined && values.mode !== 'static' && values.mode !== 'dynamic')
+    throw new Error('--mode must be "static" or "dynamic"');
+  const apiKey = values.apikey ?? process.env['MCP_GENERATOR_APIKEY'];
+  const bearerToken = values.bearer ?? process.env['MCP_GENERATOR_BEARER_TOKEN'];
+  if ((!apiKey && !bearerToken) || (apiKey && bearerToken))
+    throw new Error('Provide exactly one of --apikey or --bearer (or their env var fallback)');
+  let timeoutMs: number | undefined;
+  if (values.timeout !== undefined) {
+    timeoutMs = Number(values.timeout);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+      throw new Error('--timeout must be a positive number');
+  }
+  await runStart({
+    specPath: resolve(values.spec),
+    name: values.name,
+    version: values.version,
+    ...(values.overlay ? { overlayPath: resolve(values.overlay) } : {}),
+    ...(values.mode ? { mode: values.mode as 'static' | 'dynamic' } : {}),
+    ...(values.tool ? { allowedTools: new Set(values.tool) } : {}),
+    ...(values['server-url'] ? { serverUrl: values['server-url'] } : {}),
+    ...(apiKey ? { apiKey } : { bearerToken: bearerToken! }),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
 }
 
 function canonicalEntryPath({ filePath }: { filePath: string }): string {
