@@ -70,25 +70,58 @@ really would fail or misrepresent this", not a theoretical concern.
 
 ### Verified against (Phase 0 acceptance)
 
-| Spec                                                        | OpenAPI | Operations                  | Readiness                                                         |
-| ----------------------------------------------------------- | ------- | --------------------------- | ----------------------------------------------------------------- |
-| OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)           |
-| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 63 blockers, 642 compat31, 504 missing descriptions     |
-| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — incl. 46 references to an undefined `bearerAuth` scheme |
-| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | blocked — small; a good first Phase 8 second-consumer candidate   |
+| Spec                                                        | OpenAPI | Operations                  | Readiness                                                     |
+| ----------------------------------------------------------- | ------- | --------------------------- | ------------------------------------------------------------- |
+| OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)       |
+| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 28 blockers, 681 compat31, 504 missing descriptions |
+| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 19 blockers, 61 compat31, 139 warnings              |
+| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | blocked — 6 blockers, 8 compat31, 21 warnings                 |
 
-Notable real defects found by the audit (not tool bugs): duplicate path keys
-in the Auth spec (5 `SPEC_PARSE_ISSUE`), Auth descriptions in YAML flow
-mappings whose unquoted commas parse as bogus schema keys (now caught
-directly as `SPEC_YAML_FLOW_COMMA`, independent of where the mangled keys
-land), and 125 paths in Identity Cockpit's `docs/api-routes.md` that are not
-in the Auth spec (cross-service `/health/v1/*`, `/inv/v1/*` routes plus drift
-candidates). Regenerate all of these with the commands in `audits/README.md`.
-`RESPONSE_NO_SUCCESS` now treats a declared `3xx` response as a terminal
-success, so redirect-only OAuth/SAML flows (`samlSsoRedirect`, `samlSsoPost`,
-`oidcAuthorizeGet`, `oidcAuthorize`,
-`completeAccessCertificationCollaborationInstallation` in the Auth spec) no
-longer warn.
+The audit reports no current duplicate path keys or YAML flow-mapping comma
+issues in the Auth spec. It reports 122 documented paths that are not in the
+Auth spec, including Identity Cockpit's cross-service `/health/v1/*` and
+`/inv/v1/*` routes. The audit now treats declared `3xx` responses as success,
+so redirect-only OAuth/SAML flows (`samlSsoRedirect`, `samlSsoPost`,
+`oidcAuthorizeGet`, `oidcAuthorize`, and
+`completeAccessCertificationCollaborationInstallation`) do not produce
+`RESPONSE_NO_SUCCESS` warnings. Regenerate local reports with the commands in
+[`audits/README.md`](audits/README.md).
+
+### How OpenComp's own generator handles the operations this audit blocks
+
+The 15 OpenComp blockers (multipart uploads, SSE responses, binary response
+formats) aren't unhandled in the running OpenComp MCP server — they're
+excluded, not supported. `compileTools()` (`apps/mcp-server/src/tools.ts` in
+the OpenComp repo) has no per-operation try/catch: one unsupported operation
+fails the entire build. So every one of these is either dropped from the
+tool registry or hand-patched:
+
+- **Multipart uploads** (`BODY_MIME_UNSUPPORTED`): the 4 operations with a
+  multipart or multi-content-type body (3 via `mcp-overlay.yaml`'s
+  `operations: [...disabled: true]` list, 1 — `uploadPolicyPdf` — flagged
+  `disabled: true` directly in the spec's own `x-comp-mcp`/`x-speakeasy-mcp`
+  extension) never become tools. Their JSON-body sibling operations are kept,
+  with the overlay rewriting those DTOs (`UploadAndParseDto`,
+  `UploadAttachmentDto`, `UploadDocumentDto`, `CompleteChecklistItemDto`) to
+  drop the raw-bytes property and require an `s3Key` from a presigned
+  upload instead — the same pattern this audit recommends.
+- **SSE responses** (`RESPONSE_MIME_UNSUPPORTED`): 2 of 3 streaming
+  operations (`auto-answer`, `soa/auto-fill`) are disabled the same way,
+  explicitly preserving behavior the old (Speakeasy) generator used to omit
+  implicitly. The third (`ai-chat-policy`) is kept active via a hardcoded
+  HTTP `Accept` header override (`application/json;q=1, text/event-stream;q=0`
+  in `src/schema/value.ts`) that asks the upstream to negotiate down to a
+  plain JSON response — called out in a comment as manually
+  "verified by exhaustive wire parity", not a general solution.
+- **Binary response formats** (`SCHEMA_FORMAT_UNSUPPORTED`): the two
+  binary-download operations get the same `Accept` header override. Separately,
+  the compiler never type-checks response schemas inlined under `paths` (only
+  request parameters/bodies and named `components/schemas/*` entries), so an
+  inline `format: binary` response schema is never reached by it regardless.
+
+None of this is generic support — it's a curated allowlist (`disabled: true`)
+plus two hand-verified, per-operation `Accept` header shims. It's the same
+model this generator's Phase 4 overlay is meant to formalize.
 
 ## Development
 
@@ -108,8 +141,11 @@ named parameters for functions with 2+ arguments, early returns.
 Phase 0 (this) is the audit gate in the generalization plan
 (`opencomp/docs/plans/2026-10-26-generalize-mcp-generator-gideon-identity.md`):
 
-1. **Phase 1** — extract the product-neutral compiler/runtime core here with
-   zero behavioral change for OpenComp (byte-identical 412-tool registry).
+1. **Phase 1 (in progress)** — product-neutral compiler/runtime core landed:
+   schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
+   and an MCP client/server built on `@modelcontextprotocol/sdk`. The
+   generated CLI/transports remain the serving entry points until parity
+   cutover to a byte-identical 412-tool registry for OpenComp.
 2. **Phase 2** — config-driven build & CLI (`mcp.config.json`: spec, overlay,
    upstreams, branding, output) so any project builds a server by pointing at
    its spec.
