@@ -246,6 +246,97 @@ describe('duplicate YAML keys', () => {
   });
 });
 
+describe('unquoted flow-mapping commas', () => {
+  it('catches a mangled response description with no schema involved', async () => {
+    const yaml = [
+      'openapi: 3.0.3',
+      "info: {title: T, version: '1'}",
+      'paths:',
+      '  /v1/things:',
+      '    post:',
+      '      operationId: createThing',
+      '      responses:',
+      "        '400': {description: Missing disposition, revision, reason, or idempotency key}",
+      '',
+    ].join('\n');
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-gen-flowcomma-'));
+    const specPath = join(dir, 'flow-comma.yaml');
+    await writeFile(specPath, yaml);
+    const report = await runAudit({ specPath });
+    // This response is not under a schema, so the only earlier signal
+    // (SCHEMA_KEYWORD_UNSUPPORTED) never fires; the dedicated check must.
+    assert.ok(!codes(report).has('SCHEMA_KEYWORD_UNSUPPORTED'));
+    const finding = report.findings.find((item) => item.code === 'SPEC_YAML_FLOW_COMMA');
+    assert.ok(finding, 'expected a SPEC_YAML_FLOW_COMMA finding');
+    assert.equal(finding.severity, 'warning');
+    assert.match(finding.message, /"revision"/);
+    assert.match(finding.message, /"reason"/);
+    assert.match(finding.message, /"or idempotency key"/);
+    assert.match(finding.message, /Missing disposition, revision, reason, or idempotency key/);
+  });
+
+  it('catches the same bug in a parameter description', async () => {
+    const yaml = [
+      'openapi: 3.0.3',
+      "info: {title: T, version: '1'}",
+      'paths:',
+      '  /v1/things:',
+      '    get:',
+      '      operationId: listThings',
+      '      parameters:',
+      '        - {name: cursor, in: query, description: Opaque cursor, do not parse}',
+      "      responses: {'200': {description: OK}}",
+      '',
+    ].join('\n');
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-gen-flowcomma-param-'));
+    const specPath = join(dir, 'flow-comma-param.yaml');
+    await writeFile(specPath, yaml);
+    const report = await runAudit({ specPath });
+    const finding = report.findings.find((item) => item.code === 'SPEC_YAML_FLOW_COMMA');
+    assert.ok(finding, 'expected a SPEC_YAML_FLOW_COMMA finding for the parameter');
+    assert.match(finding.message, /"do not parse"/);
+  });
+
+  it('does not flag a quoted description with a comma', async () => {
+    const yaml = [
+      'openapi: 3.0.3',
+      "info: {title: T, version: '1'}",
+      'paths:',
+      '  /v1/things:',
+      '    post:',
+      '      operationId: createThing',
+      '      responses:',
+      "        '400': {description: 'Missing disposition, revision, or reason'}",
+      '',
+    ].join('\n');
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-gen-flowcomma-quoted-'));
+    const specPath = join(dir, 'flow-comma-quoted.yaml');
+    await writeFile(specPath, yaml);
+    const report = await runAudit({ specPath });
+    assert.ok(!codes(report).has('SPEC_YAML_FLOW_COMMA'));
+  });
+
+  it('does not flag an ordinary two-field flow mapping', async () => {
+    const yaml = [
+      'openapi: 3.0.3',
+      "info: {title: T, version: '1'}",
+      'paths:',
+      '  /v1/things:',
+      '    get:',
+      '      operationId: listThings',
+      '      summary: List things',
+      '      description: Lists all things',
+      "      responses: {'200': {description: OK}}",
+      '',
+    ].join('\n');
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-gen-flowcomma-ok-'));
+    const specPath = join(dir, 'flow-comma-ok.yaml');
+    await writeFile(specPath, yaml);
+    const report = await runAudit({ specPath });
+    assert.ok(!codes(report).has('SPEC_YAML_FLOW_COMMA'));
+  });
+});
+
 describe('docs cross-reference', () => {
   it('reports documented paths missing from the spec and undocumented operations', async () => {
     const report = await runAudit({

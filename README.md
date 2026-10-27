@@ -49,7 +49,7 @@ Outputs `report.json` (machine-readable inventory + findings) and
   | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability. |
   | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct that a 3.0-only compiler rejects (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, `const` and other 2020-12 keywords). Requires native 3.1 support (Phase 3).                                                                                                                              |
-  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec).                                                                                                                                                                                      |
+  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                          |
   | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                       |
 
 - **Derives tool names generically** from any `operationId` style
@@ -79,10 +79,16 @@ really would fail or misrepresent this", not a theoretical concern.
 
 Notable real defects found by the audit (not tool bugs): duplicate path keys
 in the Auth spec (5 `SPEC_PARSE_ISSUE`), Auth descriptions in YAML flow
-mappings whose unquoted commas parse as bogus schema keys, and 125 paths in
-Identity Cockpit's `docs/api-routes.md` that are not in the Auth spec
-(cross-service `/health/v1/*`, `/inv/v1/*` routes plus drift candidates).
-Regenerate all of these with the commands in `audits/README.md`.
+mappings whose unquoted commas parse as bogus schema keys (now caught
+directly as `SPEC_YAML_FLOW_COMMA`, independent of where the mangled keys
+land), and 125 paths in Identity Cockpit's `docs/api-routes.md` that are not
+in the Auth spec (cross-service `/health/v1/*`, `/inv/v1/*` routes plus drift
+candidates). Regenerate all of these with the commands in `audits/README.md`.
+`RESPONSE_NO_SUCCESS` now treats a declared `3xx` response as a terminal
+success, so redirect-only OAuth/SAML flows (`samlSsoRedirect`, `samlSsoPost`,
+`oidcAuthorizeGet`, `oidcAuthorize`,
+`completeAccessCertificationCollaborationInstallation` in the Auth spec) no
+longer warn.
 
 ## Development
 
@@ -118,5 +124,3 @@ Phase 0 (this) is the audit gate in the generalization plan
    Gideon Identity MCP product (independently deployed).
 6. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
-
-See `DECISIONS.md` for the frozen Phase 0 decisions and open questions.

@@ -1,7 +1,16 @@
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
 import { extname } from 'node:path';
-import { isAlias, isMap, isScalar, isSeq, parseDocument, visit, type YAMLMap } from 'yaml';
+import {
+  LineCounter,
+  isAlias,
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+  visit,
+  type YAMLMap,
+} from 'yaml';
 import { z } from 'zod';
 import type { JsonObject } from './types.js';
 
@@ -162,6 +171,66 @@ function duplicateYamlKeys({ parsed }: { parsed: ReturnType<typeof parseDocument
   return { issues, total };
 }
 
+/** Prose fields where a swallowed comma reads as silent, hard-to-spot damage. */
+const COMMA_RISK_KEYS = new Set(['description', 'summary', 'title', 'message']);
+
+/**
+ * A comma inside an unquoted flow-mapping scalar is not prose punctuation —
+ * it is the flow-mapping entry separator. `{description: Missing a, b, or c}`
+ * parses as `description: "Missing a"` plus bare, null-valued sibling keys
+ * `b` and `or c`; the rest of the sentence silently vanishes from the value.
+ * This has no connection to schema validation (SCHEMA_KEYWORD_UNSUPPORTED
+ * only trips when the mangled keys land inside a `schema` object), so it
+ * must be found directly: a description/summary/title/message entry in a
+ * flow mapping, immediately followed by one or more bare keys in the same
+ * mapping, is reconstructed from those sibling keys and reported on its own.
+ * A sibling with a real `key: value` of its own ends the run, since that is
+ * a plausible continuation into the next field rather than spilled prose.
+ */
+function flowMappingCommaIssues({
+  parsed,
+  lineCounter,
+}: {
+  parsed: ReturnType<typeof parseDocument>;
+  lineCounter: LineCounter;
+}): { issues: string[]; total: number } {
+  const issues: string[] = [];
+  let total = 0;
+  visit(parsed, {
+    Map(_, map) {
+      if (!map.flow) return;
+      const items = map.items;
+      for (const [index, item] of items.entries()) {
+        if (!isScalar(item.key) || !isScalar(item.value)) continue;
+        if (item.key.type !== 'PLAIN' || item.value.type !== 'PLAIN') continue;
+        if (typeof item.value.value !== 'string') continue;
+        if (!COMMA_RISK_KEYS.has(String(item.key.value))) continue;
+        const trailing: string[] = [];
+        for (let next = index + 1; next < items.length; next += 1) {
+          const sibling = items[next];
+          if (!sibling || sibling.value !== null || !isScalar(sibling.key)) break;
+          trailing.push(String(sibling.key.value));
+        }
+        if (trailing.length === 0) continue;
+        total += 1;
+        if (issues.length < MAX_PARSE_ISSUES) {
+          const offset = item.key.range?.[0] ?? 0;
+          const { line, col } = lineCounter.linePos(offset);
+          const reconstructed = [item.value.value, ...trailing].join(', ');
+          issues.push(
+            `Unquoted comma in flow-mapping "${String(item.key.value)}" at line ${line}, column ${col}: ` +
+              `value parsed as ${JSON.stringify(item.value.value)}, but ${trailing.length} comma-separated ` +
+              `word(s) after it (${trailing.map((word) => JSON.stringify(word)).join(', ')}) became bare, ` +
+              `null-valued keys instead of part of the text; the intended value is likely ` +
+              `${JSON.stringify(reconstructed)} — quote it or escape the commas`,
+          );
+        }
+      }
+    },
+  });
+  return { issues, total };
+}
+
 export type LoadedSpec = {
   filePath: string;
   format: 'json' | 'yaml';
@@ -175,6 +244,8 @@ export type LoadedSpec = {
   servers: string[];
   /** Non-fatal parse issues (e.g. duplicate YAML keys) surfaced as findings. */
   parseIssues: string[];
+  /** Unquoted commas in flow-mapping prose that silently truncate a value. */
+  flowCommaIssues: string[];
 };
 
 /**
@@ -343,6 +414,7 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
   const format: 'json' | 'yaml' = extension === '.json' ? 'json' : 'yaml';
   let raw: unknown;
   let parseIssues: string[] = [];
+  let flowCommaIssues: string[] = [];
   try {
     if (format === 'json') {
       // JSON.parse rejects a UTF-8 byte order mark; YAML parsers accept
@@ -362,7 +434,8 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
       // The parser duplicate-key check costs time squared in one map,
       // so the parser runs with that check off and duplicateYamlKeys
       // finds the same keys with a linear scan of the parsed maps.
-      const parsed = parseDocument(text, { merge: true, uniqueKeys: false });
+      const lineCounter = new LineCounter();
+      const parsed = parseDocument(text, { merge: true, uniqueKeys: false, lineCounter });
       // Slice before mapping: a hostile document can hold hundreds of
       // thousands of errors, and each mapped string is one finding later.
       const errorIssues = parsed.errors
@@ -372,6 +445,11 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
       parseIssues = limitParseIssues({
         issues: [...errorIssues, ...duplicates.issues],
         total: parsed.errors.length + duplicates.total,
+      });
+      const commaIssues = flowMappingCommaIssues({ parsed, lineCounter });
+      flowCommaIssues = limitParseIssues({
+        issues: commaIssues.issues,
+        total: commaIssues.total,
       });
       const mergedKeys = yamlMergeExpansion({ parsed });
       if (mergedKeys > MAX_YAML_MERGED_KEYS) {
@@ -417,5 +495,6 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
     specVersion: stringField({ object: info, key: 'version' }) ?? '(unversioned)',
     servers,
     parseIssues,
+    flowCommaIssues,
   };
 }

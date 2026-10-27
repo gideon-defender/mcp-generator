@@ -165,6 +165,39 @@ describe('review fixes', () => {
     assert.equal(report.summary.readiness, 'ready-with-warnings');
   });
 
+  it('treats a declared 3xx response as a terminal success (redirect-only OAuth/SAML flows)', async () => {
+    const spec = baseSpec({
+      '/v1/saml/sso': {
+        get: okOperation({
+          operationId: 'samlSsoRedirect',
+          responses: {
+            '302': { description: 'Redirect to the identity provider' },
+            '400': { description: 'Bad request' },
+          },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    assert.ok(!codes(report).has('RESPONSE_NO_SUCCESS'));
+    assert.equal(report.summary.readiness, 'ready');
+  });
+
+  it('still warns when an operation declares only error responses, no 2xx/3xx/default', async () => {
+    const spec = baseSpec({
+      '/v1/a': {
+        get: okOperation({
+          responses: {
+            '400': { description: 'Bad request' },
+            '404': { description: 'Not found' },
+          },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    const finding = report.findings.find((entry) => entry.code === 'RESPONSE_NO_SUCCESS');
+    assert.ok(finding, 'expected a RESPONSE_NO_SUCCESS finding');
+  });
+
   it('flags non-string schema types and non-numeric, non-boolean bounds', async () => {
     const numeric = await audit({
       spec: baseSpec({
