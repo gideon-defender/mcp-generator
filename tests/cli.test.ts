@@ -31,10 +31,15 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = resolve(repoRoot, 'src/cli.ts');
 const fixtures = resolve(repoRoot, 'tests/fixtures');
 
-async function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runCli(
+  args: string[],
+  cwd: string = repoRoot,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
-    const { stdout, stderr } = await run(process.execPath, ['--import', 'tsx', cli, ...args], {
-      cwd: repoRoot,
+    // Resolve tsx from the repo so a temp-dir cwd can still load it.
+    const tsx = import.meta.resolve('tsx');
+    const { stdout, stderr } = await run(process.execPath, ['--import', tsx, cli, ...args], {
+      cwd,
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -61,6 +66,35 @@ describe('CLI', () => {
       2,
     );
     assert.equal((await runCli(['audit'])).code, 2);
+  });
+
+  it('builds from the default config and from an explicit path', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-cli-build-'));
+    await writeFile(
+      join(dir, 'openapi.yaml'),
+      await readFile(resolve(repoRoot, 'examples/openapi.yaml')),
+    );
+    await writeFile(join(dir, 'overlay.yaml'), 'version: 1\nschemas: []\noperations: []\n');
+    const config = { spec: { path: './openapi.yaml' }, overlay: './overlay.yaml' };
+    await writeFile(join(dir, 'mcp.config.json'), JSON.stringify(config));
+    await writeFile(join(dir, 'other.json'), JSON.stringify({ ...config, output: { dir: 'out' } }));
+    const byDefault = await runCli(['build'], dir);
+    assert.equal(byDefault.code, 0, byDefault.stderr);
+    assert.match(byDefault.stdout, /Built 1 tools/);
+    const names = await readFile(join(dir, 'dist', 'tool-names.json'), 'utf8');
+    assert.equal(JSON.parse(names).length, 1);
+    const explicit = await runCli(['build', 'other.json'], dir);
+    assert.equal(explicit.code, 0, explicit.stderr);
+    const outNames = await readFile(join(dir, 'out', 'tool-names.json'), 'utf8');
+    assert.equal(JSON.parse(outNames).length, 1);
+  });
+
+  it('fails build on a missing config and on extra arguments', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-cli-build-'));
+    const missing = await runCli(['build'], dir);
+    assert.equal(missing.code, 2);
+    assert.match(missing.stderr, /Failed to read config/);
+    assert.equal((await runCli(['build', 'a.json', 'b.json'], dir)).code, 2);
   });
 
   it('fails when flags arrive without a command', async () => {

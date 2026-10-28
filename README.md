@@ -160,3 +160,24 @@ Phase 0 (this) is the audit gate in the generalization plan
    Gideon Identity MCP product (independently deployed).
 6. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
+
+## Config-driven build
+
+Describe a project in `mcp.config.json` (JSON or YAML, see `mcp.config.example.json`):
+
+```json
+{
+  "identity": { "name": "example", "version": "0.1.0" },
+  "spec": { "path": "./examples/openapi.yaml" },
+  "overlay": "./examples/mcp-overlay.yaml",
+  "output": { "dir": "dist" }
+}
+```
+
+```sh
+mcp-generator build [./mcp.config.json]
+```
+
+All paths must stay inside the working directory. The build writes
+`tool-names.json` and `contract-revision.json` (spec and overlay SHA-256, tool
+count, name, version) to `output.dir` (default `dist`).
