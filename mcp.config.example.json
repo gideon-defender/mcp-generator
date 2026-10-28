@@ -1,0 +1,20 @@
+{
+  "identity": {
+    "name": "example",
+    "displayName": "Example",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "path": "./testdata/opencomp/openapi.json",
+    "format": "json"
+  },
+  "overlay": "./mcp-overlay.yaml",
+  "upstreams": {},
+  "tools": {
+    "mode": "static"
+  },
+  "output": {
+    "dir": "dist",
+    "bin": "example-mcp"
+  }
+}
