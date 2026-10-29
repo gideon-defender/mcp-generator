@@ -99,11 +99,11 @@ tool registry or hand-patched:
 - **Multipart uploads** (`BODY_MIME_UNSUPPORTED`): the 4 operations with a
   multipart or multi-content-type body (3 via `mcp-overlay.yaml`'s
   `operations: [...disabled: true]` list, 1 — `uploadPolicyPdf` — flagged
-  `disabled: true` directly in the spec's own `x-comp-mcp`/`x-speakeasy-mcp`
-  extension) never become tools. Their JSON-body sibling operations are kept,
-  with the overlay rewriting those DTOs (`UploadAndParseDto`,
-  `UploadAttachmentDto`, `UploadDocumentDto`, `CompleteChecklistItemDto`) to
-  drop the raw-bytes property and require an `s3Key` from a presigned
+  `disabled: true` directly in the spec's own `x-comp-mcp` extension) never
+  become tools. Their JSON-body sibling operations are kept, with the overlay
+  rewriting those DTOs (`UploadAndParseDto`, `UploadAttachmentDto`,
+  `UploadDocumentDto`, `CompleteChecklistItemDto`) to drop the raw-bytes
+  property and require an `s3Key` from a presigned
   upload instead — the same pattern this audit recommends.
 - **SSE responses** (`RESPONSE_MIME_UNSUPPORTED`): 2 of 3 streaming
   operations (`auto-answer`, `soa/auto-fill`) are disabled the same way,
@@ -160,3 +160,33 @@ Phase 0 (this) is the audit gate in the generalization plan
    Gideon Identity MCP product (independently deployed).
 6. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
+
+## Phase 2: Config-driven build & CLI
+
+You can build a server from any OpenAPI 3.0+ spec using `mcp.config.json`:
+
+```json
+{
+  "identity": { "name": "example", "displayName": "Example", "version": "0.1.0" },
+  "spec": { "path": "./openapi.yaml", "format": "yaml" },
+  "overlay": "./mcp-overlay.yaml",
+  "output": { "dir": "dist", "bin": "example-mcp" }
+}
+```
+
+```sh
+mcp-generator build ./mcp.config.json
+# or
+mcp-gen build ./mcp.config.json
+```
+
+Outputs `tool-names.json` and `contract-revision.json` under the configured output directory.
+
+## MCP Overlay (v1)
+
+The overlay allows you to customize the generated tool registry before compilation:
+
+- **Schema patches** (`schemas[]`): modify component schemas. `removeProperties` deletes fields (and removes them from `required` arrays), while `properties[name]` can add/override metadata like `description`. The overlay clones and mutates the document in-memory without touching the original source.
+- **Operation policies** (`operations[]`): per operation matched by `path`+`method`, set `metadata` to control tool exposure and naming. Supported metadata fields (from `x-comp-mcp`): `name` (explicit tool name), `disabled` (hide from registry), `description` (tool description override).
+- **Name collision checks**: explicit names are reserved across all operations (including disabled) and duplicate names fail compilation. Conflicting metadata between `x-comp-mcp` and legacy extensions is rejected.
+- **Preserves source**: overlay operations clone/apply without mutating the original spec file; validation fails fast on missing targets.

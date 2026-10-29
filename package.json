@@ -1,10 +1,11 @@
 {
   "name": "@gideon/mcp-generator",
   "version": "0.1.0",
-  "description": "Standalone OpenAPI 3.0+ to MCP generator. Phase 0: contract and reuse audit for any OpenAPI 3.0 or later specification.",
+  "description": "Standalone OpenAPI 3.0+ to MCP generator. Audit, config-driven build, and compile OpenAPI specs to MCP servers.",
   "type": "module",
   "bin": {
-    "mcp-generator": "dist/cli.js"
+    "mcp-generator": "dist/cli.js",
+    "mcp-gen": "dist/bin/mcp-generator.js"
   },
   "exports": {
     ".": "./dist/index.js"
