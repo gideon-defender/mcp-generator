@@ -33,6 +33,27 @@ const keywords = new Set([
   'deprecated',
   'readOnly',
   'writeOnly',
+  // Phase 3: OpenAPI 3.1 / JSON Schema 2020-12 support
+  'const',
+  'uniqueItems',
+  'minProperties',
+  'maxProperties',
+  'discriminator',
+  'prefixItems',
+  'contains',
+  'minContains',
+  'maxContains',
+  'propertyNames',
+  'dependentRequired',
+  'dependentSchemas',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'if',
+  'then',
+  'else',
+  'contentEncoding',
+  'contentMediaType',
+  'contentSchema',
 ]);
 
 export type CompileSchema = (input: { source: unknown; location: string }) => z.ZodType;
@@ -56,16 +77,39 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
 
   function validate({ source, location }: { source: unknown; location: string }): void {
     const schema = objectSchema.parse(source);
-    for (const key of [
-      'nullable',
-      'readOnly',
-      'writeOnly',
-      'deprecated',
-      'exclusiveMinimum',
-      'exclusiveMaximum',
-    ]) {
+    for (const key of ['nullable', 'readOnly', 'writeOnly', 'deprecated']) {
       if (schema[key] !== undefined) z.boolean().parse(schema[key]);
     }
+    // Phase 3: exclusiveMinimum/exclusiveMaximum can be boolean (3.0) or number (3.1)
+    // so we don't validate their type here; the value compiler handles both forms
+
+    // Phase 4: Check for unimplemented 3.1 keywords (accepted in whitelist but not yet supported)
+    const unimplementedPhase4Keywords = [
+      'discriminator',
+      'prefixItems',
+      'contains',
+      'minContains',
+      'maxContains',
+      'propertyNames',
+      'dependentRequired',
+      'dependentSchemas',
+      'unevaluatedProperties',
+      'unevaluatedItems',
+      'if',
+      'then',
+      'else',
+      'contentEncoding',
+      'contentMediaType',
+      'contentSchema',
+    ];
+    for (const key of unimplementedPhase4Keywords) {
+      if (schema[key] !== undefined) {
+        throw new Error(
+          `${location}: ${key} is not yet supported; it is a Phase 4 feature (advanced 3.1 support)`,
+        );
+      }
+    }
+
     for (const key of Object.keys(schema)) {
       if (!keywords.has(key) && !key.startsWith('x-')) {
         throw new Error(`${location}: unsupported schema keyword ${key}`);

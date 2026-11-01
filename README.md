@@ -11,10 +11,19 @@ any other product repo. Products consume the generator; they do not live in it.
 > Hackathon** (October 26 – November 4, 2026), using Meta's $150 in Muse
 > usage credits.
 
-## Status — Phase 0 (contract & reuse audit) ✅
+## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) 🚀
 
 Phase 0 answers, for any spec: _what operations exist, what would their MCP
 tools be called, and what exactly prevents or conditions faithful generation?_
+
+Phase 2 is complete: config-driven build via `mcp.config.json`.
+
+Phase 3 is complete: native OpenAPI 3.1 / JSON Schema 2020-12 support with type arrays,
+numeric exclusive bounds, const keyword, and additional constraints (uniqueItems,
+minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support) below.
+
+Phase 4 (future): advanced 3.1 features (oneOf composition, complex const values,
+full format validation, if/then/else conditionals).
 
 ```sh
 pnpm install
@@ -28,10 +37,15 @@ node dist/cli.js audit --spec /path/to/openapi.yaml --docs /path/to/docs-dir
 
 # CI mode: exit 1 when generation is blocked
 node dist/cli.js audit --spec /path/to/openapi.json --strict
+
+# Config-driven build (Phase 2)
+node dist/cli.js build [./mcp.config.json]
 ```
 
-Outputs `report.json` (machine-readable inventory + findings) and
-`report.md` (human summary) under `audits/<spec-name>/` by default.
+Outputs:
+
+- Audit: `report.json` (machine-readable inventory + findings) and `report.md` (human summary) under `audits/<spec-name>/` by default
+- Build: `tool-names.json` and `contract-revision.json` to `output.dir` (default `dist`)
 
 ### What the audit does
 
@@ -138,28 +152,74 @@ named parameters for functions with 2+ arguments, early returns.
 
 ## Roadmap
 
-Phase 0 (this) is the audit gate in the generalization plan
-(`opencomp/docs/plans/2026-10-26-generalize-mcp-generator-gideon-identity.md`):
+Phase 0 (audit gate) is complete. Phase 1 (compiler core) is in progress.
+Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is complete.
 
 1. **Phase 1 (in progress)** — product-neutral compiler/runtime core landed:
    schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
    and an MCP client/server built on `@modelcontextprotocol/sdk`. The
    generated CLI/transports remain the serving entry points until parity
    cutover to a byte-identical 412-tool registry for OpenComp.
-2. **Phase 2** — config-driven build & CLI (`mcp.config.json`: spec, overlay,
+2. **Phase 2 (complete)** — config-driven build & CLI (`mcp.config.json`: spec, overlay,
    upstreams, branding, output) so any project builds a server by pointing at
    its spec.
-3. **Phase 3** — native OpenAPI 3.1 support (type arrays, numeric exclusive
-   bounds, `const`, plus the most common baseline blockers seen in Phase 0:
-   `uniqueItems`, `minProperties`/`maxProperties`, `discriminator`,
-   `byte`/`binary`/`hostname` formats).
-4. **Phase 4** — overlay v2: allowlist, explicit names, read/mutate
+3. **Phase 3 (complete)** — native OpenAPI 3.1 / JSON Schema 2020-12 support:
+   - ✅ Type arrays (`type: [...]` nullable form)
+   - ✅ Numeric exclusive bounds (`exclusiveMinimum`/`exclusiveMaximum` as numbers)
+   - ✅ `const` keyword
+   - ✅ `uniqueItems`, `minProperties`, `maxProperties` constraints
+   - ✅ `byte`, `binary` formats
+   - ✅ `null` type
+   - 🚧 Deferred to Phase 4: `oneOf` composition for multi-type arrays, complex const values,
+     full format validation, `if`/`then`/`else` conditionals
+4. **Phase 4** — advanced 3.1 features and overlay v2: allowlist, explicit names, read/mutate
    classification, redaction, per-operation upstream binding.
 5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
    audience, agent authorization), hand-authored composite tools, and the
    Gideon Identity MCP product (independently deployed).
 6. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
+
+## Phase 3: OpenAPI 3.1 Support
+
+This release adds comprehensive OpenAPI 3.1 and JSON Schema 2020-12 compatibility.
+
+**Type Arrays (Nullable Form)**
+
+```yaml
+# OpenAPI 3.1 nullable style
+type: [string, 'null']
+# Equivalent to: type: string + nullable: true (OpenAPI 3.0)
+```
+
+**Numeric Exclusive Bounds**
+
+```yaml
+# OpenAPI 3.1 style: exclusive bounds as numbers
+exclusiveMinimum: 0
+exclusiveMaximum: 100
+# vs OpenAPI 3.0: boolean form with separate minimum/maximum
+```
+
+**Const Keyword**
+
+```yaml
+# JSON Schema 2020-12 const values (scalars only)
+const: 'fixed-value'
+```
+
+**Additional Constraints**
+
+```yaml
+# uniqueItems with structural comparison for arrays
+uniqueItems: true
+# Property count constraints for objects
+minProperties: 1
+maxProperties: 10
+```
+
+**Type Safety**: Const values are validated against their schema's type at compile time.
+Complex const values (objects, arrays) are not yet supported; use Phase 4 for those.
 
 ## Config-driven build
 
