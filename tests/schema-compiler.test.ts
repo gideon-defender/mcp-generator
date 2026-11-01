@@ -330,7 +330,7 @@ describe('schema compiler: keyword and shape validation', () => {
   it('rejects an unsupported schema keyword', () => {
     const compile = compilerFor();
     assert.throws(
-      () => compile({ source: { type: 'string', const: 'x' }, location: '#' }),
+      () => compile({ source: { type: 'string', 'unsupported-key': 'x' }, location: '#' }),
       /unsupported schema keyword/,
     );
   });
