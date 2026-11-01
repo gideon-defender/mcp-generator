@@ -1,0 +1,13 @@
+{
+  "identity": {
+    "name": "example",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "path": "./examples/openapi.yaml"
+  },
+  "overlay": "./examples/mcp-overlay.yaml",
+  "output": {
+    "dir": "dist"
+  }
+}

@@ -21,15 +21,23 @@ import { fileURLToPath } from 'node:url';
 import { renderMarkdown, sanitizeInline } from './audit/report.js';
 import { runAudit } from './audit/run-audit.js';
 import type { AuditReport } from './audit/types.js';
+import { buildFromConfig } from './build/generate.js';
 import { runStart } from './cli/start.js';
+import { loadConfig, resolveConfigPath } from './config/loader.js';
 
 const HELP = `mcp-generator — OpenAPI 3.0+ to MCP
 
 Usage:
+  mcp-generator build [config]
   mcp-generator audit --spec <openapi.json|yaml> [--docs <path>]... [--out <dir>] [--strict]
   mcp-generator start --spec <openapi.json|yaml> --name <name> --version <version>
                       [--overlay <path>] [--server-url <url>] [--tool <name>]...
                       [--mode static|dynamic] [--apikey <key> | --bearer <token>] [--timeout <ms>]
+
+build:
+  [config]          Project config (JSON or YAML) inside the working directory.
+                    Default: ./mcp.config.json. Writes tool-names.json and
+                    contract-revision.json to output.dir (default: dist).
 
 audit:
   --spec <path>     OpenAPI 3.0.x or 3.1.x document (JSON or YAML). Required.
@@ -429,7 +437,12 @@ async function main(): Promise<void> {
   if (values.help) {
     // Help wins only for a valid or absent command. `bogus --help` is a bad
     // invocation, not a help request.
-    if (command !== undefined && command !== 'audit' && command !== 'start') {
+    if (
+      command !== undefined &&
+      command !== 'audit' &&
+      command !== 'start' &&
+      command !== 'build'
+    ) {
       throw new Error(`Unknown command: ${command}`);
     }
     process.stdout.write(HELP);
@@ -441,9 +454,15 @@ async function main(): Promise<void> {
     const hasFlags = Object.entries(values).some(
       ([key, value]) => key !== 'help' && value !== undefined && value !== false,
     );
-    if (hasFlags) throw new Error('Missing command: expected "audit" or "start"');
+    if (hasFlags) throw new Error('Missing command: expected "audit", "start" or "build"');
     process.stdout.write(HELP);
     return;
+  }
+  if (command === 'build') {
+    if (positionals.length > 2) {
+      throw new Error(`Unexpected extra arguments: ${positionals.slice(2).join(' ')}`);
+    }
+    return runBuildCommand({ configPath: positionals[1] });
   }
   if (positionals.length > 1) {
     throw new Error(`Unexpected extra arguments: ${positionals.slice(1).join(' ')}`);
@@ -489,6 +508,13 @@ async function main(): Promise<void> {
       `Reports: ${resolve(outDir, 'report.md')} · ${resolve(outDir, 'report.json')}\n`,
   );
   if (values.strict && summary.readiness === 'blocked') process.exitCode = 1;
+}
+
+async function runBuildCommand({ configPath }: { configPath: string | undefined }): Promise<void> {
+  const cwd = process.cwd();
+  const config = await loadConfig(configPath ?? resolveConfigPath(cwd), cwd);
+  const result = await buildFromConfig(config, cwd);
+  process.stdout.write(`Built ${result.tools.length} tools -> ${result.outputDir}\n`);
 }
 
 async function runStartCommand({

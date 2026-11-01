@@ -1,0 +1,15 @@
+openapi: 3.0.3
+info:
+  title: Example API
+  version: 1.0.0
+servers:
+  - url: https://api.example.test
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Get health
+      description: Returns the service health.
+      responses:
+        '200':
+          description: OK
