@@ -19,9 +19,10 @@ const documentSchema = z
 // and HTTP execution (client.ts) are separate layers built on top of it in tools.ts.
 export function loadOpenApi({ source, overlay }: { source: unknown; overlay: unknown }) {
   const document = documentSchema.parse(structuredClone(source));
+  const policy = overlaySchema.parse(overlay);
   const entries = operationEntries(document.paths);
   assignToolNames(entries);
-  applyOwnedOverlay({ document, entries, overlay: overlaySchema.parse(overlay) });
+  applyOwnedOverlay({ document, entries, overlay: policy });
   // Validate explicit overlay name changes against all names, including disabled.
   const names = new Set<string>();
   for (const { operation } of entries) {
@@ -37,10 +38,21 @@ export function loadOpenApi({ source, overlay }: { source: unknown; overlay: unk
     const operationId = z.string().min(1).parse(operation['operationId']);
     const summary = z.string().min(1).parse(operation['summary']);
     const description = z.string().min(1).parse(operation['description']);
+    if (
+      policy.allowlist &&
+      !policy.allowlist.includes(name) &&
+      !policy.allowlist.includes(operationId)
+    )
+      return [];
     return [
       {
         name,
         description: metadata.description ?? `${summary}\n\n${description}`,
+        classification:
+          metadata.classification ??
+          (['get', 'head', 'options'].includes(method) ? 'read' : 'mutate'),
+        upstream: metadata.upstream,
+        redaction: metadata.redaction,
         method,
         path,
         operationId,

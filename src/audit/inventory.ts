@@ -16,6 +16,23 @@ export const METHODS = [
   'trace',
 ] as const;
 
+/** Mirrors the runtime: in-spec `classification` metadata wins over the HTTP-method default. */
+function classifyOperation({
+  method,
+  operation,
+}: {
+  method: string;
+  operation: JsonObject;
+}): 'read' | 'mutate' {
+  for (const key of ['x-comp-mcp', 'x-speakeasy-mcp']) {
+    const metadata = operation[key];
+    if (typeof metadata !== 'object' || metadata === null) continue;
+    const value = (metadata as JsonObject)['classification'];
+    if (value === 'read' || value === 'mutate') return value;
+  }
+  return ['get', 'head', 'options'].includes(method) ? 'read' : 'mutate';
+}
+
 export function escapePointer(segment: string): string {
   return segment.replace(/~/g, '~0').replace(/\//g, '~1');
 }
@@ -175,7 +192,7 @@ export function buildInventory({
       summary: stringField({ object: operation, key: 'summary' }) ?? null,
       description: stringField({ object: operation, key: 'description' }) ?? null,
       derivedToolName: deriveToolName({ operationId, method, path }),
-      classification: ['get', 'head', 'options'].includes(method) ? 'read' : 'mutate',
+      classification: classifyOperation({ method, operation }),
       security: securityNames({ operation, document }),
       parameters,
       requestContentTypes: contentTypes({ container: operation['requestBody'], document }),

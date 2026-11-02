@@ -22,8 +22,12 @@ Phase 3 is complete: native OpenAPI 3.1 / JSON Schema 2020-12 support with type 
 numeric exclusive bounds, const keyword, and additional constraints (uniqueItems,
 minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support) below.
 
-Phase 4 (future): advanced 3.1 features (oneOf composition, complex const values,
-full format validation, if/then/else conditionals).
+Phase 4 is in place for multi-type arrays, complex const values, `if`/`then`/`else`,
+overlay v2 allowlists, explicit classification, and policy metadata. These keywords
+still fail the build: `discriminator`, `prefixItems`, `contains`, `minContains`,
+`maxContains`, `propertyNames`, `dependentRequired`, `dependentSchemas`,
+`unevaluatedProperties`, `unevaluatedItems`, `contentEncoding`, `contentMediaType`,
+`contentSchema`.
 
 ```sh
 pnpm install
@@ -170,10 +174,10 @@ Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is comp
    - ✅ `uniqueItems`, `minProperties`, `maxProperties` constraints
    - ✅ `byte`, `binary` formats
    - ✅ `null` type
-   - 🚧 Deferred to Phase 4: `oneOf` composition for multi-type arrays, complex const values,
-     full format validation, `if`/`then`/`else` conditionals
-4. **Phase 4** — advanced 3.1 features and overlay v2: allowlist, explicit names, read/mutate
-   classification, redaction, per-operation upstream binding.
+   - 🚧 Deferred: full format validation
+4. **Phase 4** — multi-type arrays, complex const values, `if`/`then`/`else`, and overlay v2:
+   allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
+   binding (used only when no `serverUrl` is configured).
 5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
    audience, agent authorization), hand-authored composite tools, and the
    Gideon Identity MCP product (independently deployed).
@@ -204,7 +208,7 @@ exclusiveMaximum: 100
 **Const Keyword**
 
 ```yaml
-# JSON Schema 2020-12 const values (scalars only)
+# JSON Schema 2020-12 const values (scalars, objects, arrays)
 const: 'fixed-value'
 ```
 
@@ -219,7 +223,7 @@ maxProperties: 10
 ```
 
 **Type Safety**: Const values are validated against their schema's type at compile time.
-Complex const values (objects, arrays) are not yet supported; use Phase 4 for those.
+Complex const values (objects, arrays) are compared structurally, independent of key order.
 
 ## Config-driven build
 
