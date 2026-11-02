@@ -43,10 +43,27 @@ export function compileValue({
     } else if (types.length === 1) {
       type = types[0];
     } else {
-      throw new Error(
-        `${location}: type array with multiple non-null types [${types.join(', ')}] is not yet supported; ` +
-          `use oneOf composition instead to express union types`,
-      );
+      const constValue = schema['const'];
+      const compatibleTypes = (() => {
+        if (constValue === undefined) return types;
+        if (constValue === null) return hasNull ? ['null'] : [];
+        if (typeof constValue === 'string') return types.filter((member) => member === 'string');
+        if (typeof constValue === 'number')
+          return types.filter((member) => member === 'number' || member === 'integer');
+        if (typeof constValue === 'boolean') return types.filter((member) => member === 'boolean');
+        if (Array.isArray(constValue)) return types.filter((member) => member === 'array');
+        return types.filter((member) => member === 'object');
+      })();
+      if (compatibleTypes.length === 0)
+        throw new Error(`${location}: const value does not match any type in the type array`);
+      const branchSchemas = compatibleTypes.map((member) => ({ ...schema, type: member }));
+      let union = compile({ source: branchSchemas[0]!, location: `${location}/type/0` });
+      for (let index = 1; index < branchSchemas.length; index += 1)
+        union = z.union([
+          union,
+          compile({ source: branchSchemas[index]!, location: `${location}/type/${index}` }),
+        ]);
+      return constValue === undefined && hasNull ? union.nullable() : union;
     }
   } else {
     type = typeof rawType === 'string' ? rawType : undefined;
@@ -206,7 +223,6 @@ export function compileValue({
       typeof constValue === 'boolean' ||
       constValue === null
     ) {
-      // Validate type compatibility: const must match the schema's type
       if (type !== undefined) {
         const valueType = typeof constValue;
         const typeMatch =
@@ -215,15 +231,25 @@ export function compileValue({
           (type === 'number' && valueType === 'number') ||
           (type === 'integer' && valueType === 'number' && Number.isInteger(constValue)) ||
           (type === 'boolean' && valueType === 'boolean');
-        if (!typeMatch) {
+        if (!typeMatch)
           throw new Error(
             `${location}: const value type (${valueType}) does not match schema type (${type})`,
           );
-        }
       }
       value = z.intersection(value, z.literal(constValue));
-    } else if (typeof constValue === 'object') {
-      throw new Error(`${location}: const with complex values (objects/arrays) not yet supported`);
+    } else {
+      if (
+        type !== undefined &&
+        !(
+          (Array.isArray(constValue) && type === 'array') ||
+          (!Array.isArray(constValue) && type === 'object')
+        )
+      )
+        throw new Error(`${location}: const complex value does not match schema type ${type}`);
+      // refine, not z.custom: custom types cannot be converted by z.toJSONSchema.
+      value = value.refine((input) => canonicalJson(input) === canonicalJson(constValue), {
+        message: 'Value must equal the schema const',
+      });
     }
   }
 

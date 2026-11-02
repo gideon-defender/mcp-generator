@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { MAX_PARSE_ISSUES, MAX_SPEC_BYTES, loadSpec } from '../src/audit/load-spec.js';
 import { renderMarkdown } from '../src/audit/report.js';
 import { runAudit } from '../src/audit/run-audit.js';
-import { codes } from './helpers.js';
+import { baseSpec, codes, createAudit, okOperation } from './helpers.js';
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fixture = (name: string) => resolve(fixtures, name);
@@ -185,6 +185,60 @@ describe('runAudit inventory', () => {
     const create = report.operations.find((op) => op.operationId === 'createUser');
     assert.equal(create?.classification, 'mutate');
     assert.deepEqual(create?.requestContentTypes, ['application/json']);
+  });
+
+  describe('classification metadata', () => {
+    const { audit } = createAudit({ prefix: 'audit-classification-' });
+    const classify = async (operation: Record<string, unknown>) => {
+      const report = await audit({ spec: baseSpec({ '/things': { post: operation } }) });
+      return report.operations[0]?.classification;
+    };
+
+    it('defaults to the HTTP method when no metadata is present', async () => {
+      assert.equal(await classify(okOperation()), 'mutate');
+    });
+
+    it('honors an in-spec x-comp-mcp classification override', async () => {
+      assert.equal(
+        await classify(okOperation({ 'x-comp-mcp': { classification: 'read' } })),
+        'read',
+      );
+    });
+
+    it('honors the legacy x-speakeasy-mcp classification', async () => {
+      assert.equal(
+        await classify(okOperation({ 'x-speakeasy-mcp': { classification: 'read' } })),
+        'read',
+      );
+    });
+
+    it('prefers x-comp-mcp over x-speakeasy-mcp, like the runtime', async () => {
+      assert.equal(
+        await classify(
+          okOperation({
+            'x-comp-mcp': { classification: 'mutate' },
+            'x-speakeasy-mcp': { classification: 'read' },
+          }),
+        ),
+        'mutate',
+      );
+    });
+
+    it('ignores an invalid classification value instead of throwing', async () => {
+      assert.equal(
+        await classify(okOperation({ 'x-comp-mcp': { classification: 'bogus' } })),
+        'mutate',
+      );
+    });
+
+    it('can mark a GET as mutate', async () => {
+      const report = await audit({
+        spec: baseSpec({
+          '/things': { get: okOperation({ 'x-comp-mcp': { classification: 'mutate' } }) },
+        }),
+      });
+      assert.equal(report.operations[0]?.classification, 'mutate');
+    });
   });
 });
 

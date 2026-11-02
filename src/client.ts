@@ -31,10 +31,19 @@ function retryDelay({ response, attempt }: { response?: Response; attempt: numbe
   return Math.min(500 * 2 ** attempt, 10_000) * (0.5 + Math.random() * 0.5);
 }
 
-function resolveServer({ options, servers }: { options: ApiOptions; servers: string[] }): URL {
+function resolveServer({
+  options,
+  servers,
+  upstream,
+}: {
+  options: ApiOptions;
+  servers: string[];
+  upstream?: string;
+}): URL {
   const index = options.serverIndex ?? 0;
   if (!Number.isInteger(index) || index < 0) throw new Error('Invalid server index');
-  const selected = options.serverUrl ?? servers[index];
+  // The operator's serverUrl wins so a spec extension cannot redirect credentials.
+  const selected = options.serverUrl ?? upstream ?? servers[index];
   if (!selected) throw new Error('Missing API server');
   const url = new URL(selected);
   if (
@@ -52,23 +61,54 @@ function resolveServer({ options, servers }: { options: ApiOptions; servers: str
 async function formatResponse({
   response,
   credential,
+  redaction,
 }: {
   response: Response;
   credential: string;
+  redaction?: boolean | string[];
 }): Promise<CallToolResult> {
   // Upstream errors can echo credentials or private request data. Do not expose their bodies.
   if (!response.ok) {
     await response.body?.cancel();
     return errorResult(`API request failed (HTTP ${response.status}).`);
   }
+  if (redaction === true) {
+    await response.body?.cancel();
+    return { content: [{ type: 'text', text: '[REDACTED]' }] };
+  }
   const mimeType = response.headers.get('content-type') ?? '';
-  if (mimeType.startsWith('image/') || mimeType.startsWith('audio/')) {
+  const binary = mimeType.startsWith('image/') || mimeType.startsWith('audio/');
+  // Field masks only work on JSON; any other body would leak unmasked, so fail closed.
+  if (Array.isArray(redaction) && binary) {
+    await response.body?.cancel();
+    return { content: [{ type: 'text', text: '[REDACTED]' }] };
+  }
+  if (binary) {
     const data = Buffer.from(await response.arrayBuffer()).toString('base64');
     return {
       content: [{ type: mimeType.startsWith('image/') ? 'image' : 'audio', data, mimeType }],
     };
   }
-  const text = (await response.text()).replaceAll(credential, '[REDACTED]');
+  let text = (await response.text()).replaceAll(credential, '[REDACTED]');
+  if (Array.isArray(redaction) && text.trim() !== '') {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      const mask = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(mask);
+        if (value && typeof value === 'object')
+          return Object.fromEntries(
+            Object.entries(value).map(([key, item]) => [
+              key,
+              redaction.includes(key) ? '[REDACTED]' : mask(item),
+            ]),
+          );
+        return value;
+      };
+      text = JSON.stringify(mask(parsed));
+    } catch {
+      return { content: [{ type: 'text', text: '[REDACTED]' }] };
+    }
+  }
   return { content: [{ type: 'text', text }] };
 }
 
@@ -98,7 +138,11 @@ export async function executeRequest({
     if ((!apiKey && !bearerToken) || (apiKey && bearerToken))
       return errorResult('Missing or conflicting API credentials.');
     const request = serializeRequest({ plan: tool.plan, input, path: tool.path });
-    const server = resolveServer({ options, servers });
+    const server = resolveServer({
+      options,
+      servers,
+      ...(tool.upstream ? { upstream: tool.upstream } : {}),
+    });
     // Concatenate before URL parsing so an encoded path value cannot change the origin.
     const url = new URL(`${server.href.replace(/\/$/, '')}${request.path}`);
     url.search = request.query.toString();
@@ -125,7 +169,11 @@ export async function executeRequest({
       }
       const retryStatus = response && [429, 500, 502, 503, 504].includes(response.status);
       if (response && (!retryStatus || !retryable || attempt >= retries)) {
-        return await formatResponse({ response, credential: (apiKey ?? bearerToken)! });
+        return await formatResponse({
+          response,
+          credential: (apiKey ?? bearerToken)!,
+          ...(tool.redaction !== undefined ? { redaction: tool.redaction } : {}),
+        });
       }
       const waitMs = retryDelay({ ...(response ? { response } : {}), attempt });
       await response?.body?.cancel();

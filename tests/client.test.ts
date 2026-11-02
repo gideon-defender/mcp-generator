@@ -89,6 +89,104 @@ describe('executeRequest: credentials', () => {
     assert.equal(result.isError, undefined);
     assert.equal((result.content[0] as { text: string }).text, 'your key was [REDACTED], denied');
   });
+
+  it('redacts the whole binary response when full response redaction is enabled', async () => {
+    const { tools, servers } = registry();
+    const tool = { ...tools[0]!, redaction: true } as CompiledTool;
+    const fetch = fetchStub(
+      () =>
+        new Response(new Uint8Array([1, 2, 3]), {
+          headers: { 'content-type': 'image/png' },
+        }),
+    );
+    const result = await executeRequest({
+      tool,
+      input: {},
+      options: { apiKey: 'key-1', fetch },
+      servers,
+    });
+    assert.deepEqual(result.content, [{ type: 'text', text: '[REDACTED]' }]);
+  });
+
+  it('redacts configured JSON fields recursively', async () => {
+    const { tools, servers } = registry();
+    const tool = { ...tools[0]!, redaction: ['token'] } as CompiledTool;
+    const fetch = fetchStub(
+      () =>
+        new Response(JSON.stringify({ token: 'secret', nested: [{ token: 'secret' }] }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const result = await executeRequest({
+      tool,
+      input: {},
+      options: { apiKey: 'key-1', fetch },
+      servers,
+    });
+    assert.equal(
+      JSON.parse((result.content[0] as { text: string }).text).nested[0].token,
+      '[REDACTED]',
+    );
+  });
+});
+
+describe('executeRequest: field redaction fails closed', () => {
+  async function run({ body, contentType }: { body: string | Uint8Array; contentType?: string }) {
+    const { tools, servers } = registry();
+    const tool = { ...tools[0]!, redaction: ['token'] } as CompiledTool;
+    const fetch = fetchStub(
+      () => new Response(body, contentType ? { headers: { 'content-type': contentType } } : {}),
+    );
+    return executeRequest({ tool, input: {}, options: { apiKey: 'key-1', fetch }, servers });
+  }
+  const textOf = (result: { content: unknown[] }) => (result.content[0] as { text: string }).text;
+
+  it('withholds a non-JSON body', async () => {
+    const result = await run({ body: 'token=secret', contentType: 'text/plain' });
+    assert.deepEqual(result.content, [{ type: 'text', text: '[REDACTED]' }]);
+  });
+
+  it('withholds a malformed JSON body', async () => {
+    const result = await run({ body: '{"token": "secret"', contentType: 'application/json' });
+    assert.deepEqual(result.content, [{ type: 'text', text: '[REDACTED]' }]);
+  });
+
+  it('withholds image and audio bodies', async () => {
+    for (const contentType of ['image/png', 'audio/mpeg']) {
+      const result = await run({ body: new Uint8Array([1, 2, 3]), contentType });
+      assert.deepEqual(result.content, [{ type: 'text', text: '[REDACTED]' }]);
+    }
+  });
+
+  it('returns an empty body unchanged', async () => {
+    const result = await run({ body: '' });
+    assert.equal(textOf(result), '');
+  });
+
+  it('keeps unmasked fields and masks matching keys at every depth', async () => {
+    const result = await run({
+      body: JSON.stringify({ id: 1, token: 's', list: [{ token: 's', ok: true }] }),
+      contentType: 'application/json',
+    });
+    assert.deepEqual(JSON.parse(textOf(result)), {
+      id: 1,
+      token: '[REDACTED]',
+      list: [{ token: '[REDACTED]', ok: true }],
+    });
+  });
+
+  it('keeps an own __proto__ key instead of dropping it', async () => {
+    const result = await run({
+      body: '{"__proto__": {"a": 1}, "token": "s"}',
+      contentType: 'application/json',
+    });
+    assert.equal(textOf(result), '{"__proto__":{"a":1},"token":"[REDACTED]"}');
+  });
+
+  it('returns JSON scalars unchanged', async () => {
+    const result = await run({ body: '42', contentType: 'application/json' });
+    assert.equal(textOf(result), '42');
+  });
 });
 
 describe('executeRequest: server resolution', () => {
@@ -145,6 +243,35 @@ describe('executeRequest: server resolution', () => {
       servers,
     });
     assert.equal(withUserinfo.isError, true);
+  });
+
+  it('uses a per-operation upstream URL when no serverUrl is configured', async () => {
+    const { tools, servers } = registry();
+    const tool = { ...tools[0]!, upstream: 'https://operation.example.test' } as CompiledTool;
+    let seenUrl: URL | undefined;
+    const fetch = fetchStub((url) => {
+      seenUrl = url as URL;
+      return new Response('ok');
+    });
+    await executeRequest({ tool, input: {}, options: { apiKey: 'k', fetch }, servers });
+    assert.equal(seenUrl?.origin, 'https://operation.example.test');
+  });
+
+  it('keeps the operator serverUrl ahead of a per-operation upstream', async () => {
+    const { tools, servers } = registry();
+    const tool = { ...tools[0]!, upstream: 'https://operation.example.test' } as CompiledTool;
+    let seenUrl: URL | undefined;
+    const fetch = fetchStub((url) => {
+      seenUrl = url as URL;
+      return new Response('ok');
+    });
+    await executeRequest({
+      tool,
+      input: {},
+      options: { apiKey: 'k', serverUrl: 'https://override.example.test', fetch },
+      servers,
+    });
+    assert.equal(seenUrl?.origin, 'https://override.example.test');
   });
 });
 

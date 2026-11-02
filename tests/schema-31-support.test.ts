@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSchemaCompiler } from '../src/schema/compiler.js';
+import { compileTools } from '../src/tools.js';
 import type { JsonObject } from '../src/openapi/metadata.js';
 
 describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
@@ -365,34 +366,12 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
     });
   });
 
-  describe('const with complex values error handling', () => {
+  describe('complex const values', () => {
     const compileSource = (source: JsonObject) =>
       createSchemaCompiler({ components: { schemas: {} } })({
         source,
         location: '/components/schemas/TestSchema',
       });
-
-    it('throws error for const with object value', () => {
-      assert.throws(
-        () =>
-          compileSource({
-            type: 'object',
-            const: { version: '1.0' },
-          }),
-        /const with complex values \(objects\/arrays\) not yet supported/,
-      );
-    });
-
-    it('throws error for const with array value', () => {
-      assert.throws(
-        () =>
-          compileSource({
-            type: 'array',
-            const: ['fixed', 'items'],
-          }),
-        /const with complex values \(objects\/arrays\) not yet supported/,
-      );
-    });
 
     it('accepts const with scalar string', () => {
       const schema = compileSource({
@@ -465,26 +444,20 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
       );
     });
 
-    it('throws error for type array with multiple non-null types', () => {
-      assert.throws(
-        () =>
-          compileSource({
-            type: ['string', 'number'],
-          }),
-        /type array with multiple non-null types \[string, number\] is not yet supported/,
-      );
+    it('compiles type array with multiple non-null types', () => {
+      const schema = compileSource({ type: ['string', 'number'] });
+      assert(schema.safeParse('text').success);
+      assert(schema.safeParse(42).success);
+      assert(!schema.safeParse(true).success);
     });
 
-    it('throws error for type array with multiple non-null types and includes null', () => {
-      assert.throws(
-        () =>
-          compileSource({
-            type: ['string', 'number', 'null'],
-          }),
-        /type array with multiple non-null types \[string, number\] is not yet supported/,
-      );
+    it('compiles type array with multiple non-null types and includes null', () => {
+      const schema = compileSource({ type: ['string', 'number', 'null'] });
+      assert(schema.safeParse('text').success);
+      assert(schema.safeParse(42).success);
+      assert(schema.safeParse(null).success);
+      assert(!schema.safeParse(true).success);
     });
-
     it('allows const with null on nullable type', () => {
       const schema = compileSource({
         type: ['string', 'null'],
@@ -518,20 +491,8 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
         () =>
           compileSource({
             discriminator: { propertyName: 'type' },
-            oneOf: [{ $ref: '#/components/schemas/Cat' }],
           }),
-        /discriminator is not yet supported; it is a Phase 4 feature/,
-      );
-    });
-
-    it('rejects schema with if/then/else keywords (Phase 4)', () => {
-      assert.throws(
-        () =>
-          compileSource({
-            if: { properties: { foo: { const: 1 } } },
-            then: { required: ['bar'] },
-          }),
-        /if is not yet supported; it is a Phase 4 feature/,
+        /discriminator is not yet supported/,
       );
     });
 
@@ -542,7 +503,7 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
             type: 'array',
             prefixItems: [{ type: 'string' }, { type: 'number' }],
           }),
-        /prefixItems is not yet supported; it is a Phase 4 feature/,
+        /prefixItems is not yet supported/,
       );
     });
 
@@ -553,7 +514,7 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
             type: 'object',
             dependentRequired: { foo: ['bar'] },
           }),
-        /dependentRequired is not yet supported; it is a Phase 4 feature/,
+        /dependentRequired is not yet supported/,
       );
     });
 
@@ -565,8 +526,165 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
             properties: { foo: { type: 'string' } },
             unevaluatedProperties: false,
           }),
-        /unevaluatedProperties is not yet supported; it is a Phase 4 feature/,
+        /unevaluatedProperties is not yet supported/,
       );
     });
+
+    it('compiles if/then/else conditionals', () => {
+      const schema = compileSource({
+        type: 'object',
+        properties: { kind: { type: 'string' }, amount: { type: 'number' } },
+        required: ['kind'],
+        if: { properties: { kind: { const: 'amount' } }, required: ['kind'] },
+        then: { required: ['amount'] },
+        else: { properties: { amount: { type: 'string' } } },
+      });
+      assert(schema.safeParse({ kind: 'amount', amount: 1 }).success);
+      assert(!schema.safeParse({ kind: 'amount' }).success);
+      assert(schema.safeParse({ kind: 'other' }).success);
+    });
+  });
+
+  it('matches const branches in a multi-type array', () => {
+    const compileSource = (source: JsonObject) =>
+      createSchemaCompiler({ components: { schemas: {} } })({
+        source,
+        location: '/components/schemas/TestSchema',
+      });
+    const stringSchema = compileSource({ type: ['string', 'number'], const: 'fixed' });
+    assert(stringSchema.safeParse('fixed').success);
+    assert(!stringSchema.safeParse(42).success);
+
+    const numberSchema = compileSource({ type: ['string', 'number'], const: 42 });
+    assert(numberSchema.safeParse(42).success);
+    assert(!numberSchema.safeParse('fixed').success);
+
+    const nullSchema = compileSource({ type: ['string', 'null'], const: null });
+    assert(nullSchema.safeParse(null).success);
+    assert(!nullSchema.safeParse('fixed').success);
+  });
+});
+
+describe('Phase 4: boolean if/then/else', () => {
+  const compileSource = (source: JsonObject) =>
+    createSchemaCompiler({ components: { schemas: {} } })({
+      source,
+      location: '/components/schemas/TestSchema',
+    });
+
+  it('treats then: false as rejecting every value that matches the if', () => {
+    const schema = compileSource({
+      type: 'object',
+      properties: { kind: { type: 'string' } },
+      if: { properties: { kind: { const: 'banned' } }, required: ['kind'] },
+      then: false,
+    });
+    assert(!schema.safeParse({ kind: 'banned' }).success);
+    assert(schema.safeParse({ kind: 'fine' }).success);
+  });
+
+  it('treats else: false as rejecting every value that fails the if', () => {
+    const schema = compileSource({
+      type: 'object',
+      properties: { kind: { type: 'string' } },
+      if: { properties: { kind: { const: 'only' } }, required: ['kind'] },
+      else: false,
+    });
+    assert(schema.safeParse({ kind: 'only' }).success);
+    assert(!schema.safeParse({ kind: 'other' }).success);
+  });
+
+  it('treats then: true and else: true as always passing', () => {
+    const schema = compileSource({ type: 'object', if: {}, then: true, else: true });
+    assert(schema.safeParse({}).success);
+  });
+
+  it('accepts a boolean if', () => {
+    const always = compileSource({
+      type: 'string',
+      if: true,
+      then: { type: 'string', minLength: 3 },
+    });
+    assert(!always.safeParse('ab').success);
+    assert(always.safeParse('abc').success);
+    const never = compileSource({
+      type: 'string',
+      if: false,
+      then: { type: 'string', minLength: 10 },
+      else: { type: 'string', maxLength: 2 },
+    });
+    assert(never.safeParse('ab').success);
+    assert(!never.safeParse('abc').success);
+  });
+
+  it('rejects a non-schema if/then/else value', () => {
+    assert.throws(() => compileSource({ type: 'string', if: 'yes', then: {} }));
+    assert.throws(() => compileSource({ type: 'string', if: {}, then: 5 }));
+  });
+
+  it('converts boolean conditionals through tool compilation', () => {
+    const tool = compileTools({
+      source: {
+        openapi: '3.1.0',
+        paths: {
+          '/x': {
+            post: {
+              operationId: 'xController_create_v1',
+              summary: 'Create',
+              description: 'Create x.',
+              requestBody: {
+                required: true,
+                content: {
+                  'application/json': { schema: { type: 'string', if: true, then: false } },
+                },
+              },
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+      overlay: { version: 2, schemas: [], operations: [] },
+    }).tools[0]!;
+    assert(!tool.plan.input.safeParse({ request: 'anything' }).success);
+  });
+});
+
+describe('Phase 4: schemas survive tool compilation', () => {
+  const toolFor = (schema: JsonObject) =>
+    compileTools({
+      source: {
+        openapi: '3.1.0',
+        paths: {
+          '/x': {
+            post: {
+              operationId: 'xController_create_v1',
+              summary: 'Create',
+              description: 'Create x.',
+              requestBody: { required: true, content: { 'application/json': { schema } } },
+              responses: { '200': { description: 'OK' } },
+            },
+          },
+        },
+      },
+      overlay: { version: 2, schemas: [], operations: [] },
+    }).tools[0]!;
+
+  it('converts if/then/else schemas to JSON Schema and still enforces them', () => {
+    const tool = toolFor({
+      type: 'object',
+      properties: { kind: { type: 'string' }, amount: { type: 'number' } },
+      if: { properties: { kind: { const: 'amount' } }, required: ['kind'] },
+      then: { required: ['amount'] },
+    });
+    const input = tool.plan.input;
+    assert(input.safeParse({ request: { kind: 'amount', amount: 1 } }).success);
+    assert(!input.safeParse({ request: { kind: 'amount' } }).success);
+  });
+
+  it('converts complex const schemas to JSON Schema and still enforces them', () => {
+    const tool = toolFor({ const: { a: 1, b: [2] } });
+    const input = tool.plan.input;
+    assert(input.safeParse({ request: { b: [2], a: 1 } }).success);
+    assert(!input.safeParse({ request: { a: 2, b: [2] } }).success);
   });
 });

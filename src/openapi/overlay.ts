@@ -9,7 +9,8 @@ import {
 
 export const overlaySchema = z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
+    allowlist: z.array(z.string().min(1)).optional(),
     schemas: z.array(
       z
         .object({

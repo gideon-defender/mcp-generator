@@ -6,7 +6,7 @@ import { createSchemaCompiler } from './schema/compiler.js';
 
 export function compileTools({ source, overlay }: { source: unknown; overlay: unknown }) {
   const { document, tools } = loadOpenApi({ source, overlay });
-  if (!/^3\.0\.\d+$/.test(document.openapi))
+  if (!/^3\.(0|1)\.\d+$/.test(document.openapi))
     throw new Error(`Unsupported OpenAPI version ${document.openapi}`);
   const compile = createSchemaCompiler(document);
   const registry = tools.map((tool) => {
@@ -20,7 +20,7 @@ export function compileTools({ source, overlay }: { source: unknown; overlay: un
     // Conversion is also a build/startup gate; never degrade unsupported types into `any`.
     const inputSchema = z.toJSONSchema(plan.input, { io: 'input', target: 'draft-2020-12' });
     const staticInputSchema = z.toJSONSchema(plan.input, { io: 'input', target: 'draft-7' });
-    const readOnlyHint = ['get', 'head', 'options'].includes(tool.method);
+    const readOnlyHint = tool.classification === 'read';
     return {
       ...tool,
       plan,

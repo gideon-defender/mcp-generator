@@ -83,8 +83,14 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
     // Phase 3: exclusiveMinimum/exclusiveMaximum can be boolean (3.0) or number (3.1)
     // so we don't validate their type here; the value compiler handles both forms
 
-    // Phase 4: Check for unimplemented 3.1 keywords (accepted in whitelist but not yet supported)
-    const unimplementedPhase4Keywords = [
+    // Phase 4 advanced keywords are validated and compiled below where they have semantics.
+
+    for (const key of Object.keys(schema)) {
+      if (!keywords.has(key) && !key.startsWith('x-')) {
+        throw new Error(`${location}: unsupported schema keyword ${key}`);
+      }
+    }
+    const unsupportedPhase4Keywords = [
       'discriminator',
       'prefixItems',
       'contains',
@@ -95,25 +101,12 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       'dependentSchemas',
       'unevaluatedProperties',
       'unevaluatedItems',
-      'if',
-      'then',
-      'else',
       'contentEncoding',
       'contentMediaType',
       'contentSchema',
     ];
-    for (const key of unimplementedPhase4Keywords) {
-      if (schema[key] !== undefined) {
-        throw new Error(
-          `${location}: ${key} is not yet supported; it is a Phase 4 feature (advanced 3.1 support)`,
-        );
-      }
-    }
-
-    for (const key of Object.keys(schema)) {
-      if (!keywords.has(key) && !key.startsWith('x-')) {
-        throw new Error(`${location}: unsupported schema keyword ${key}`);
-      }
+    for (const key of unsupportedPhase4Keywords) {
+      if (schema[key] !== undefined) throw new Error(`${location}: ${key} is not yet supported`);
     }
     if (schema['$ref'] !== undefined) {
       const ref = z.string().parse(schema['$ref']);
@@ -159,6 +152,12 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
     for (const key of ['items', 'additionalProperties'] as const) {
       if (schema[key] === undefined || typeof schema[key] === 'boolean') continue;
       validate({ source: schema[key], location: `${location}/${key}` });
+    }
+    for (const key of ['if', 'then', 'else'] as const) {
+      if (schema[key] === undefined) continue;
+      const member = z.union([z.boolean(), objectSchema]).parse(schema[key]);
+      if (typeof member === 'boolean') continue;
+      validate({ source: member, location: `${location}/${key}` });
     }
     for (const key of ['allOf', 'oneOf', 'anyOf'] as const) {
       if (schema[key] === undefined) continue;
@@ -209,6 +208,25 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       result = z.intersection(result, composed);
     }
     if (schema['nullable'] === true) result = result.nullable();
+    if (schema['if'] !== undefined) {
+      const conditional = (key: 'if' | 'then' | 'else'): z.ZodType | undefined => {
+        if (schema[key] === undefined) return undefined;
+        const member = z.union([z.boolean(), objectSchema]).parse(schema[key]);
+        if (typeof member === 'boolean') return member ? z.unknown() : z.never();
+        return compile({ source: member, location: `${location}/${key}` });
+      };
+      const ifSchema = conditional('if')!;
+      const thenSchema = conditional('then');
+      const elseSchema = conditional('else');
+      // refine, not z.custom: custom types cannot be converted by z.toJSONSchema.
+      result = result.refine(
+        (value) => {
+          const branch = ifSchema.safeParse(value).success ? thenSchema : elseSchema;
+          return branch === undefined || branch.safeParse(value).success;
+        },
+        { message: 'Value does not satisfy the conditional schema' },
+      );
+    }
     if (schema['default'] !== undefined) {
       if (!result.safeParse(schema['default']).success)
         throw new Error(`${location}: invalid schema default`);

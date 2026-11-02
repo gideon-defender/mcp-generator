@@ -7,6 +7,9 @@ export const metadataSchema = z
     name: z.string().min(1).optional(),
     disabled: z.boolean().optional(),
     description: z.string().min(1).optional(),
+    classification: z.enum(['read', 'mutate']).optional(),
+    upstream: z.string().min(1).optional(),
+    redaction: z.union([z.boolean(), z.array(z.string().min(1))]).optional(),
   })
   .strict();
 export type McpMetadata = z.infer<typeof metadataSchema>;
@@ -28,7 +31,14 @@ export function readMetadata(operation: JsonObject): McpMetadata {
     operation['x-speakeasy-mcp'] === undefined
       ? {}
       : metadataSchema.parse(operation['x-speakeasy-mcp']);
-  for (const key of ['name', 'disabled', 'description'] as const) {
+  for (const key of [
+    'name',
+    'disabled',
+    'description',
+    'classification',
+    'upstream',
+    'redaction',
+  ] as const) {
     if (owned[key] !== undefined && legacy[key] !== undefined && owned[key] !== legacy[key]) {
       throw new Error(`Conflicting MCP ${key}: ${String(operation['operationId'])}`);
     }

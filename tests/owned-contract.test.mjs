@@ -210,3 +210,37 @@ test('overlay name changes are collision-checked and descriptions are tool-only'
   assert.equal(result.tools[0].description, 'Agent guidance');
   assert.equal(doc.paths['/a'].get.description, 'Description');
 });
+
+test('overlay v2 allowlist and operation policy metadata are enforced', () => {
+  const doc = tinyDocument({
+    '/a': { get: { ...operation('AController_read_v1') } },
+    '/b': { post: { ...operation('BController_mutate_v1') } },
+  });
+  const filtered = loadOpenApi({
+    source: doc,
+    overlay: {
+      version: 2,
+      allowlist: ['read-a'],
+      schemas: [],
+      operations: [
+        {
+          path: '/a',
+          method: 'get',
+          metadata: {
+            name: 'read-a',
+            classification: 'read',
+            upstream: 'https://read.example.test',
+            redaction: ['token'],
+          },
+        },
+      ],
+    },
+  });
+  assert.deepEqual(
+    filtered.tools.map((tool) => tool.name),
+    ['read-a'],
+  );
+  assert.equal(filtered.tools[0].classification, 'read');
+  assert.equal(filtered.tools[0].upstream, 'https://read.example.test');
+  assert.deepEqual(filtered.tools[0].redaction, ['token']);
+});
