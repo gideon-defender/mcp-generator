@@ -14,6 +14,7 @@ export const McpProjectConfigSchema = z
     output: z
       .object({
         dir: z.string().min(1).optional(),
+        generatorDependency: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
