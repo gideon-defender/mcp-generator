@@ -6,7 +6,7 @@ import type { CompileSchema } from './compiler.js';
 // Recursion depth limit to prevent stack overflow on deeply nested structures.
 const MAX_CANONICAL_DEPTH = 100;
 
-function canonicalJson(value: unknown, depth = 0): string {
+export function canonicalJson(value: unknown, depth = 0): string {
   if (depth > MAX_CANONICAL_DEPTH) {
     throw new Error(`canonicalJson: recursion depth exceeded (max ${MAX_CANONICAL_DEPTH})`);
   }
@@ -158,6 +158,7 @@ export function compileValue({
     else if (format === 'email') string = string.check(z.email());
     else if (format === 'uuid') string = string.check(z.uuid());
     else if (format === 'uri') string = string.check(z.url());
+    else if (format === 'byte') string = string.check(z.base64());
     else if (format !== undefined && format !== 'password')
       throw new Error(`${location}: unsupported format ${String(format)}`);
     value = string;
@@ -200,9 +201,7 @@ export function compileValue({
     // The emitted UpdateFindingDto.revisionNote, for example, is object + maxLength.
     if (
       schema['format'] !== undefined &&
-      !['int32', 'int64', 'float', 'double', 'byte', 'binary'].includes(
-        z.string().parse(schema['format']),
-      )
+      !['int32', 'int64', 'float', 'double'].includes(z.string().parse(schema['format']))
     ) {
       throw new Error(`${location}: unsupported numeric format`);
     }

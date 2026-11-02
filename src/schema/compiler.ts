@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { JsonObject, objectSchema } from '../openapi/metadata.js';
-import { compileValue } from './value.js';
+import { compileValue, canonicalJson } from './value.js';
+import { readDiscriminator } from './discriminator.js';
+import { createCompositionCycleFinder } from './cycles.js';
 
 const keywords = new Set([
   '$ref',
@@ -62,6 +64,8 @@ export type CompileSchema = (input: { source: unknown; location: string }) => z.
 export function createSchemaCompiler(document: JsonObject): CompileSchema {
   const cache = new Map<string, z.ZodType>();
   const checked = new Set<string>();
+  // Routing in progress, so a subtype that extends its parent does not route back into itself.
+  const routing = new Set<string>();
 
   function resolve({ ref, location }: { ref: string; location: string }): JsonObject {
     if (!ref.startsWith('#/')) throw new Error(`${location}: external reference ${ref}`);
@@ -74,6 +78,8 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
     if (!parsed.success) throw new Error(`${location}: dangling reference ${ref}`);
     return parsed.data;
   }
+
+  const findCompositionCycle = createCompositionCycleFinder(resolve);
 
   function validate({ source, location }: { source: unknown; location: string }): void {
     const schema = objectSchema.parse(source);
@@ -91,7 +97,6 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       }
     }
     const unsupportedPhase4Keywords = [
-      'discriminator',
       'prefixItems',
       'contains',
       'minContains',
@@ -142,6 +147,13 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
         checked.add(ref);
         validate({ source: target, location: `${location} -> ${ref}` });
       }
+    }
+    const cycle = findCompositionCycle({ schema, location });
+    if (cycle !== undefined) {
+      throw new Error(`${location}: unproductive composition cycle through ${cycle}`);
+    }
+    for (const ref of readDiscriminator({ schema, location })?.refs.values() ?? []) {
+      validate({ source: { $ref: ref }, location: `${location}/discriminator` });
     }
     for (const key of ['properties'] as const) {
       if (schema[key] === undefined) continue;
@@ -206,6 +218,33 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
             ? z.xor(members)
             : z.union(members);
       result = z.intersection(result, composed);
+    }
+    const discriminator = readDiscriminator({ schema, location });
+    if (discriminator && discriminator.refs.size > 0) {
+      const targets = new Map(
+        [...discriminator.refs].map(([name, ref]) => [
+          name,
+          compile({ source: { $ref: ref }, location: `${location}/discriminator/${name}` }),
+        ]),
+      );
+      // Route on the tag so a mapped value is checked only against its own schema.
+      result = result.refine(
+        (value) => {
+          if (typeof value !== 'object' || value === null || Array.isArray(value)) return true;
+          const tag: unknown = (value as Record<string, unknown>)[discriminator.propertyName];
+          const target = typeof tag === 'string' ? targets.get(tag) : undefined;
+          if (target === undefined) return true;
+          const key = `${location}\0${canonicalJson(value)}`;
+          if (routing.has(key)) return true;
+          routing.add(key);
+          try {
+            return target.safeParse(value).success;
+          } finally {
+            routing.delete(key);
+          }
+        },
+        { message: `Value does not match its ${discriminator.propertyName} discriminator schema` },
+      );
     }
     if (schema['nullable'] === true) result = result.nullable();
     if (schema['if'] !== undefined) {

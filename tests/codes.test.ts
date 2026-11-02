@@ -364,7 +364,7 @@ describe('schema walker guards', () => {
                       bad: { type: 'string', format: 'int32' },
                       badInt: { type: 'integer', format: 'uuid' },
                       good: { type: 'string', format: 'uuid' },
-                      weird: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+                      weird: { type: 'array', items: { type: 'string' }, bogusKeyword: true },
                       bogus: { type: 'nope' },
                     },
                   },

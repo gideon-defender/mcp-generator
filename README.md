@@ -23,8 +23,9 @@ numeric exclusive bounds, const keyword, and additional constraints (uniqueItems
 minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support) below.
 
 Phase 4 is in place for multi-type arrays, complex const values, `if`/`then`/`else`,
-overlay v2 allowlists, explicit classification, and policy metadata. These keywords
-still fail the build: `discriminator`, `prefixItems`, `contains`, `minContains`,
+`discriminator` (tag routing for `oneOf`/`anyOf`, implicit `$ref` names and explicit
+`mapping`), overlay v2 allowlists, explicit classification, and policy metadata. These
+keywords still fail the build: `prefixItems`, `contains`, `minContains`,
 `maxContains`, `propertyNames`, `dependentRequired`, `dependentSchemas`,
 `unevaluatedProperties`, `unevaluatedItems`, `contentEncoding`, `contentMediaType`,
 `contentSchema`.
@@ -63,12 +64,12 @@ Outputs:
   read, everything else = mutate).
 - **Catalogues findings** with stable codes and severities:
 
-  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                       |
-  | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability. |
-  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct that a 3.0-only compiler rejects (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, `const` and other 2020-12 keywords). Requires native 3.1 support (Phase 3).                                                                                                                              |
-  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                          |
-  | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                       |
+  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                     |
+  | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                               |
+  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler does not handle yet, such as `prefixItems` or `propertyNames`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`) are not flagged. |
+  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                        |
+  | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                                                                     |
 
 - **Derives tool names generically** from any `operationId` style
   (camelCase, snake_case, kebab-case, `XxxController_op_v1`). Derivation is a
@@ -91,9 +92,9 @@ really would fail or misrepresent this", not a theoretical concern.
 | Spec                                                        | OpenAPI | Operations                  | Readiness                                                     |
 | ----------------------------------------------------------- | ------- | --------------------------- | ------------------------------------------------------------- |
 | OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)       |
-| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 28 blockers, 681 compat31, 504 missing descriptions |
-| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 19 blockers, 61 compat31, 139 warnings              |
-| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | blocked — 6 blockers, 8 compat31, 21 warnings                 |
+| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 11 blockers, 677 compat31, 504 missing descriptions |
+| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 2 blockers, 55 compat31, 139 warnings               |
+| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | ready with warnings — 0 blockers, 0 compat31, 21 warnings     |
 
 The audit reports no current duplicate path keys or YAML flow-mapping comma
 issues in the Auth spec. It reports 122 documented paths that are not in the
@@ -172,12 +173,15 @@ Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is comp
    - ✅ Numeric exclusive bounds (`exclusiveMinimum`/`exclusiveMaximum` as numbers)
    - ✅ `const` keyword
    - ✅ `uniqueItems`, `minProperties`, `maxProperties` constraints
-   - ✅ `byte`, `binary` formats
+   - ✅ `byte` format (base64 string)
+   - 🚧 `binary` format: rejected on strings; needs a policy (presigned `s3Key` upload vs. reject)
    - ✅ `null` type
    - 🚧 Deferred: full format validation
-4. **Phase 4** — multi-type arrays, complex const values, `if`/`then`/`else`, and overlay v2:
+4. **Phase 4 (in progress)** — multi-type arrays, complex const values, `if`/`then`/`else`,
+   `discriminator`, and overlay v2:
    allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
-   binding (used only when no `serverUrl` is configured).
+   binding (used only when no `serverUrl` is configured). Remaining keywords: `propertyNames`
+   next, then `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`.
 5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
    audience, agent authorization), hand-authored composite tools, and the
    Gideon Identity MCP product (independently deployed).

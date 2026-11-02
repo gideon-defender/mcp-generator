@@ -35,11 +35,19 @@ export const SUPPORTED_KEYWORDS = new Set([
   'deprecated',
   'readOnly',
   'writeOnly',
+  // Handled natively by src/schema/compiler.ts and value.ts.
+  'const',
+  'uniqueItems',
+  'minProperties',
+  'maxProperties',
+  'discriminator',
+  'if',
+  'then',
+  'else',
 ]);
 
-/** Keywords that only exist in JSON Schema 2020-12 / OpenAPI 3.1. */
+/** 2020-12 / OpenAPI 3.1 keywords the compiler rejects. */
 export const KEYWORDS_31 = new Set([
-  'const',
   'prefixItems',
   'contains',
   'minContains',
@@ -49,9 +57,6 @@ export const KEYWORDS_31 = new Set([
   'dependentSchemas',
   'unevaluatedProperties',
   'unevaluatedItems',
-  'if',
-  'then',
-  'else',
   'contentEncoding',
   'contentMediaType',
   'contentSchema',
@@ -65,7 +70,15 @@ export const KEYWORDS_31 = new Set([
   '$defs',
 ]);
 
-export const STRING_FORMATS = new Set(['date-time', 'date', 'email', 'uuid', 'uri', 'password']);
+export const STRING_FORMATS = new Set([
+  'date-time',
+  'date',
+  'email',
+  'uuid',
+  'uri',
+  'password',
+  'byte',
+]);
 export const NUMERIC_FORMATS = new Set(['int32', 'int64', 'float', 'double']);
 export const TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
 

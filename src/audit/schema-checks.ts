@@ -1,4 +1,6 @@
 import { escapePointer } from './inventory.js';
+import { findCompositionCycle } from './composition-cycles.js';
+import { discriminatorMappingRefs, discriminatorProblem } from './discriminator.js';
 import {
   KEYWORDS_31,
   NUMERIC_FORMATS,
@@ -114,6 +116,33 @@ function checkSchema({
           location,
           push,
           message: `$ref is not a string (got ${schemaKind({ value: ref })}); its target cannot be resolved`,
+        });
+      }
+      const cycle = findCompositionCycle({ schema, document });
+      if (cycle !== undefined) {
+        push({
+          code: 'SCHEMA_REF_CYCLE',
+          severity: 'blocker',
+          category: 'schema',
+          message: `Unproductive composition cycle at ${cycle}: the schema reaches itself through $ref, allOf, oneOf, anyOf or if/then/else only`,
+          location,
+        });
+      }
+      const discriminatorIssue = discriminatorProblem({ schema });
+      if (discriminatorIssue !== undefined) {
+        pushInvalidSchema({
+          location: `${location}/discriminator`,
+          push,
+          message: discriminatorIssue,
+        });
+      }
+      for (const { tag, ref: targetRef } of discriminatorMappingRefs({ schema })) {
+        checkRef({
+          ref: targetRef,
+          location: `${location}/discriminator/mapping/${escapePointer(tag)}`,
+          document,
+          is31,
+          push,
         });
       }
       const type = schema['type'];

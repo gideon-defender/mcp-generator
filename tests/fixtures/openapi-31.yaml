@@ -25,6 +25,10 @@ paths:
                     exclusiveMinimum: 0
                   kind:
                     const: admin
+                  tags:
+                    type: object
+                    propertyNames:
+                      pattern: "^[a-z]+$"
 components:
   securitySchemes:
     bearerAuth:
