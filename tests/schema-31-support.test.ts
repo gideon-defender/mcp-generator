@@ -486,13 +486,202 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
         location: '/components/schemas/TestSchema',
       });
 
-    it('rejects schema with discriminator keyword (Phase 4)', () => {
+    it('compiles byte format as base64 on strings', () => {
+      const schema = compileSource({ type: 'string', format: 'byte' });
+      assert(schema.safeParse('aGVsbG8=').success);
+      assert(!schema.safeParse('not base64!').success);
+    });
+
+    it('rejects binary on strings and byte/binary on numbers', () => {
+      assert.throws(
+        () => compileSource({ type: 'string', format: 'binary' }),
+        /unsupported format binary/,
+      );
+      assert.throws(
+        () => compileSource({ type: 'integer', format: 'byte' }),
+        /unsupported numeric format/,
+      );
+      assert.throws(
+        () => compileSource({ type: 'number', format: 'binary' }),
+        /unsupported numeric format/,
+      );
+    });
+
+    it('compiles discriminator with implicit and explicit mapping', () => {
+      const compile = createSchemaCompiler({
+        components: {
+          schemas: {
+            Cat: {
+              type: 'object',
+              properties: { kind: { type: 'string' }, lives: { type: 'integer' } },
+              required: ['kind', 'lives'],
+            },
+            Dog: {
+              type: 'object',
+              properties: { kind: { type: 'string' }, bark: { type: 'boolean' } },
+              required: ['kind'],
+            },
+          },
+        },
+      });
+      const schema = compile({
+        source: {
+          anyOf: [{ $ref: '#/components/schemas/Cat' }, { $ref: '#/components/schemas/Dog' }],
+          discriminator: {
+            propertyName: 'kind',
+            mapping: { puppy: '#/components/schemas/Dog' },
+          },
+        },
+        location: '/components/schemas/Pet',
+      });
+      assert(schema.safeParse({ kind: 'Cat', lives: 9 }).success);
+      assert(schema.safeParse({ kind: 'puppy', bark: true }).success);
+      // Tag routes to Cat, which requires lives, even though Dog would match.
+      assert(!schema.safeParse({ kind: 'Cat', bark: true }).success);
+      assert(!schema.safeParse({ kind: 'puppy', bark: 'loud' }).success);
+    });
+
+    it('routes a bare-name mapping and falls back to oneOf for unmapped or missing tags', () => {
+      const pet = createSchemaCompiler({
+        components: {
+          schemas: {
+            Cat: {
+              type: 'object',
+              properties: { kind: { type: 'string' }, lives: { type: 'integer' } },
+              required: ['lives'],
+            },
+            Dog: {
+              type: 'object',
+              properties: { kind: { type: 'string' }, bark: { type: 'boolean' } },
+              required: ['bark'],
+            },
+          },
+        },
+      })({
+        source: {
+          oneOf: [{ $ref: '#/components/schemas/Cat' }, { $ref: '#/components/schemas/Dog' }],
+          discriminator: { propertyName: 'kind', mapping: { puppy: 'Dog' } },
+        },
+        location: '/components/schemas/Pet',
+      });
+      assert(pet.safeParse({ kind: 'puppy', bark: true }).success);
+      assert(!pet.safeParse({ kind: 'puppy', lives: 9 }).success);
+      // Unmapped and missing tags fall back to plain oneOf semantics.
+      assert(pet.safeParse({ kind: 'Hamster', bark: true }).success);
+      assert(pet.safeParse({ bark: true }).success);
+      assert(!pet.safeParse({ kind: 'Hamster' }).success);
+      assert(!pet.safeParse('not an object').success);
+    });
+
+    it('rejects a oneOf/allOf cycle that never consumes structure', () => {
+      const compile = createSchemaCompiler({
+        components: {
+          schemas: {
+            Pet: {
+              oneOf: [{ $ref: '#/components/schemas/Cat' }],
+              discriminator: { propertyName: 'kind' },
+            },
+            Cat: { allOf: [{ $ref: '#/components/schemas/Pet' }, { type: 'object' }] },
+          },
+        },
+      });
+      assert.throws(
+        () => compile({ source: { $ref: '#/components/schemas/Pet' }, location: '/Pet' }),
+        /unproductive composition cycle/,
+      );
+    });
+
+    it('rejects a cycle that runs through a discriminator mapping target', () => {
+      const compile = createSchemaCompiler({
+        components: {
+          schemas: {
+            Pet: {
+              oneOf: [{ type: 'object' }],
+              discriminator: { propertyName: 'kind', mapping: { dog: 'Dog' } },
+            },
+            Dog: { allOf: [{ $ref: '#/components/schemas/Pet' }, { type: 'object' }] },
+          },
+        },
+      });
+      assert.throws(
+        () => compile({ source: { $ref: '#/components/schemas/Pet' }, location: '/Pet' }),
+        /unproductive composition cycle/,
+      );
+    });
+
+    it('enforces a discriminator mapping on a parent without oneOf', () => {
+      const compile = createSchemaCompiler({
+        components: {
+          schemas: {
+            Pet: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string' },
+                friends: { type: 'array', items: { $ref: '#/components/schemas/Pet' } },
+              },
+              discriminator: { propertyName: 'kind', mapping: { dog: 'Dog' } },
+            },
+            Dog: {
+              allOf: [
+                { $ref: '#/components/schemas/Pet' },
+                { type: 'object', properties: { bark: { type: 'boolean' } }, required: ['bark'] },
+              ],
+            },
+          },
+        },
+      });
+      const pet = compile({ source: { $ref: '#/components/schemas/Pet' }, location: '/Pet' });
+      assert(pet.safeParse({ kind: 'dog', bark: true }).success);
+      assert(!pet.safeParse({ kind: 'dog' }).success);
+      assert(pet.safeParse({ kind: 'cat' }).success);
+      // A nested friend with the same tag is still routed on its own.
+      assert(!pet.safeParse({ kind: 'dog', bark: true, friends: [{ kind: 'dog' }] }).success);
+      assert(
+        pet.safeParse({ kind: 'dog', bark: true, friends: [{ kind: 'dog', bark: false }] }).success,
+      );
+    });
+
+    it('allows recursion through properties and items', () => {
+      const tree = createSchemaCompiler({
+        components: {
+          schemas: {
+            Node: {
+              allOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    children: { type: 'array', items: { $ref: '#/components/schemas/Node' } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      })({ source: { $ref: '#/components/schemas/Node' }, location: '/Node' });
+      assert(tree.safeParse({ children: [{ children: [] }] }).success);
+      assert(!tree.safeParse({ children: [{ children: 'x' }] }).success);
+    });
+
+    it('rejects malformed discriminator and dangling mapping', () => {
+      assert.throws(
+        () => compileSource({ oneOf: [{ type: 'string' }], discriminator: { propertyName: '' } }),
+        /invalid discriminator/,
+      );
       assert.throws(
         () =>
           compileSource({
-            discriminator: { propertyName: 'type' },
+            oneOf: [{ type: 'string' }],
+            discriminator: { propertyName: 'kind', mapping: { a: 'Missing' } },
           }),
-        /discriminator is not yet supported/,
+        /dangling reference/,
+      );
+      assert.throws(
+        () =>
+          compileSource({
+            oneOf: [{ type: 'string' }],
+            discriminator: { propertyName: 'kind', mapping: { a: 'https://x.test/a' } },
+          }),
+        /external reference/,
       );
     });
 

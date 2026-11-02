@@ -222,6 +222,126 @@ describe('review regressions', () => {
     assert.equal(report.summary.readiness, 'needs-31-support');
   });
 
+  it('does not flag keywords the compiler handles natively', async () => {
+    const spec = baseSpec({
+      '/v1/a': {
+        get: jsonResponse({
+          type: 'object',
+          minProperties: 1,
+          maxProperties: 3,
+          oneOf: [{ type: 'object' }, { type: 'object' }],
+          discriminator: { propertyName: 'kind' },
+          properties: { tags: { type: 'array', items: { type: 'string' }, uniqueItems: true } },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    assert.ok(!codes(report).has('SCHEMA_KEYWORD_UNSUPPORTED'));
+    assert.ok(!codes(report).has('SPEC31_KEYWORD'));
+  });
+
+  it('flags a oneOf/allOf cycle once and allows recursion through properties', async () => {
+    const spec: Spec = {
+      openapi: '3.1.0',
+      info: { title: 'T', version: '1' },
+      servers: [{ url: 'https://x.test' }],
+      paths: { '/v1/a': { get: jsonResponse({ $ref: '#/components/schemas/Pet' }) } },
+      components: {
+        securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+        schemas: {
+          Pet: { oneOf: [{ $ref: '#/components/schemas/Cat' }] },
+          Cat: { allOf: [{ $ref: '#/components/schemas/Pet' }, { type: 'object' }] },
+          Tree: {
+            type: 'object',
+            properties: { kids: { type: 'array', items: { $ref: '#/components/schemas/Tree' } } },
+          },
+        },
+      },
+    };
+    const report = await audit({ spec });
+    const cycles = report.findings.filter((finding) => finding.code === 'SCHEMA_REF_CYCLE');
+    assert.equal(cycles.length, 1);
+    assert.match(cycles[0]?.message ?? '', /composition cycle/);
+    assert.equal(cycles[0]?.severity, 'blocker');
+  });
+
+  it('flags a cycle that runs through a discriminator mapping target', async () => {
+    const spec: Spec = {
+      openapi: '3.1.0',
+      info: { title: 'T', version: '1' },
+      servers: [{ url: 'https://x.test' }],
+      paths: { '/v1/a': { get: jsonResponse({ $ref: '#/components/schemas/Pet' }) } },
+      components: {
+        securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+        schemas: {
+          Pet: {
+            oneOf: [{ type: 'object' }],
+            discriminator: { propertyName: 'kind', mapping: { dog: 'Dog' } },
+          },
+          Dog: { allOf: [{ $ref: '#/components/schemas/Pet' }, { type: 'object' }] },
+        },
+      },
+    };
+    const report = await audit({ spec });
+    assert.equal(report.findings.filter((f) => f.code === 'SCHEMA_REF_CYCLE').length, 1);
+  });
+
+  it('flags a malformed discriminator', async () => {
+    const spec = baseSpec({
+      '/v1/a': {
+        get: jsonResponse({
+          type: 'object',
+          properties: {
+            a: { oneOf: [{ type: 'object' }], discriminator: {} },
+            b: {
+              oneOf: [{ type: 'object' }],
+              discriminator: { propertyName: 'k', mapping: { x: 1 } },
+            },
+            c: { oneOf: [{ type: 'object' }], discriminator: 'kind' },
+            d: { oneOf: [{ type: 'object' }], discriminator: { propertyName: 'k' } },
+          },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    const invalid = report.findings.filter((f) => f.code === 'SCHEMA_INVALID');
+    assert.equal(invalid.length, 3);
+  });
+
+  it('flags a discriminator mapping that points at a missing schema', async () => {
+    const spec = baseSpec({
+      '/v1/a': {
+        get: jsonResponse({
+          oneOf: [{ type: 'object' }],
+          discriminator: { propertyName: 'kind', mapping: { a: 'Missing', b: 'https://x.test/b' } },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    assert.ok(codes(report).has('SCHEMA_REF_DANGLING'));
+    assert.ok(codes(report).has('SCHEMA_REF_EXTERNAL'));
+  });
+
+  it('accepts byte but still flags binary as an unsupported string format', async () => {
+    const spec = baseSpec({
+      '/v1/a': {
+        get: jsonResponse({
+          type: 'object',
+          properties: {
+            data: { type: 'string', format: 'byte' },
+            file: { type: 'string', format: 'binary' },
+          },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    const format = report.findings.filter(
+      (finding) => finding.code === 'SCHEMA_FORMAT_UNSUPPORTED',
+    );
+    assert.equal(format.length, 1);
+    assert.ok(format[0]?.location.endsWith('/file'));
+  });
+
   it('flags type null and boolean schemas in a 3.0 document', async () => {
     const nullReport = await audit({
       spec: baseSpec({ '/v1/a': { get: jsonResponse({ type: 'null' }) } }),
