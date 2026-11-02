@@ -19,6 +19,21 @@ export function canonicalJson(value: unknown, depth = 0): string {
   return JSON.stringify(value);
 }
 
+// Keys are always strings, so a key schema without a type (for example only `pattern`) targets them.
+function asKeySchema(schema: JsonObject): JsonObject {
+  if (schema['$ref'] !== undefined) return schema;
+  const keySchema: JsonObject = { type: 'string', ...schema };
+  for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {
+    const members = schema[key];
+    if (!Array.isArray(members)) continue;
+    keySchema[key] = members.map((member) => {
+      const parsed = objectSchema.safeParse(member);
+      return parsed.success ? asKeySchema(parsed.data) : member;
+    });
+  }
+  return keySchema;
+}
+
 export function compileValue({
   schema,
   location,
@@ -80,7 +95,14 @@ export function compileValue({
     ['array', ['items', 'minItems', 'maxItems', 'uniqueItems']],
     [
       'object',
-      ['properties', 'required', 'additionalProperties', 'minProperties', 'maxProperties'],
+      [
+        'properties',
+        'required',
+        'additionalProperties',
+        'minProperties',
+        'maxProperties',
+        'propertyNames',
+      ],
     ],
     ['number', ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf']],
   ] as const) {
@@ -97,8 +119,11 @@ export function compileValue({
       schema['properties'] === undefined ? {} : objectSchema.parse(schema['properties']);
     const required = new Set(z.array(z.string()).parse(schema['required'] ?? []));
     const shape: Record<string, z.ZodType> = Object.create(null);
+    const defaults = new Map<string, string>();
     for (const name of new Set([...Object.keys(properties), ...required])) {
       const definition = objectSchema.parse(properties[name] ?? {});
+      if (definition['default'] !== undefined)
+        defaults.set(name, canonicalJson(definition['default']));
       const field = compile({ source: definition, location: `${location}/properties/${name}` });
       // A default accepts omission without making its JSON-schema field required.
       // Unknown-valued required-only branches must still reject a missing key.
@@ -130,6 +155,28 @@ export function compileValue({
       const max = z.number().int().nonnegative().parse(schema['maxProperties']);
       object = object.refine((v) => Object.keys(v as object).length <= max, {
         message: `Expected at most ${max} properties`,
+      });
+    }
+    const propertyNames = schema['propertyNames'];
+    // A property default is added to the parsed output, so a key holding exactly its default is not caller input.
+    const sentKeys = (v: unknown) =>
+      Object.entries(v as Record<string, unknown>)
+        .filter(([key, item]) => !defaults.has(key) || defaults.get(key) !== canonicalJson(item))
+        .map(([key]) => key);
+    if (propertyNames === false) {
+      object = object.refine((v) => sentKeys(v).length === 0, {
+        message: 'Expected no properties',
+      });
+    } else if (propertyNames !== undefined && propertyNames !== true) {
+      const parsedNames = objectSchema.safeParse(propertyNames);
+      if (!parsedNames.success)
+        throw new Error(`${location}: propertyNames must be a schema object or boolean`);
+      const names = compile({
+        source: asKeySchema(parsedNames.data),
+        location: `${location}/propertyNames`,
+      });
+      object = object.refine((v) => sentKeys(v).every((key) => names.safeParse(key).success), {
+        message: 'Property names do not satisfy the propertyNames schema',
       });
     }
     value = object;

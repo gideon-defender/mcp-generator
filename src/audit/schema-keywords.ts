@@ -44,6 +44,7 @@ export const SUPPORTED_KEYWORDS = new Set([
   'if',
   'then',
   'else',
+  'propertyNames',
 ]);
 
 /** 2020-12 / OpenAPI 3.1 keywords the compiler rejects. */
@@ -52,7 +53,6 @@ export const KEYWORDS_31 = new Set([
   'contains',
   'minContains',
   'maxContains',
-  'propertyNames',
   'dependentRequired',
   'dependentSchemas',
   'unevaluatedProperties',
