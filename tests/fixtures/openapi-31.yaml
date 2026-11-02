@@ -29,6 +29,8 @@ paths:
                     type: object
                     propertyNames:
                       pattern: "^[a-z]+$"
+                    dependentRequired:
+                      name: [score]
 components:
   securitySchemes:
     bearerAuth:

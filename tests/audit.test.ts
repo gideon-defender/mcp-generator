@@ -262,6 +262,11 @@ describe('runAudit catalogue', () => {
     assert.ok(compatCodes.has('SPEC31_TYPE_ARRAY'));
     assert.ok(compatCodes.has('SPEC31_EXCLUSIVE_BOUND'));
     assert.ok(compatCodes.has('SPEC31_KEYWORD'));
+    const keywords = compat
+      .filter((finding) => finding.code === 'SPEC31_KEYWORD')
+      .map((finding) => finding.message);
+    assert.ok(keywords.some((message) => message.includes('dependentRequired')));
+    assert.ok(!keywords.some((message) => message.includes('propertyNames')));
     assert.equal(report.findings.filter((finding) => finding.severity === 'blocker').length, 0);
   });
 });

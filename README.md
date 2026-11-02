@@ -24,9 +24,10 @@ minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support
 
 Phase 4 is in place for multi-type arrays, complex const values, `if`/`then`/`else`,
 `discriminator` (tag routing for `oneOf`/`anyOf`, implicit `$ref` names and explicit
-`mapping`), overlay v2 allowlists, explicit classification, and policy metadata. These
+`mapping`), `propertyNames` (every object key must match the schema), overlay v2
+allowlists, explicit classification, and policy metadata. These
 keywords still fail the build: `prefixItems`, `contains`, `minContains`,
-`maxContains`, `propertyNames`, `dependentRequired`, `dependentSchemas`,
+`maxContains`, `dependentRequired`, `dependentSchemas`,
 `unevaluatedProperties`, `unevaluatedItems`, `contentEncoding`, `contentMediaType`,
 `contentSchema`.
 
@@ -72,7 +73,7 @@ Outputs:
   | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                     |
   | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                               |
-  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler does not handle yet, such as `prefixItems` or `propertyNames`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`) are not flagged. |
+  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler rejects, such as `prefixItems` or `contains`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`) are not flagged. |
   | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                        |
   | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                                                                     |
 
@@ -183,10 +184,10 @@ Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is comp
    - ✅ `null` type
    - 🚧 Deferred: full format validation
 4. **Phase 4 (in progress)** — multi-type arrays, complex const values, `if`/`then`/`else`,
-   `discriminator`, and overlay v2:
+   `discriminator`, `propertyNames`, and overlay v2:
    allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
-   binding (used only when no `serverUrl` is configured). Remaining keywords: `propertyNames`
-   next, then `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`.
+   binding (used only when no `serverUrl` is configured). Remaining keywords: `prefixItems`,
+   `contains`, `dependent*`, `unevaluated*`, `content*`.
 5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
    audience, agent authorization), hand-authored composite tools, and the
    Gideon Identity MCP product (independently deployed).

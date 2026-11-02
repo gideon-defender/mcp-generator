@@ -101,7 +101,6 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       'contains',
       'minContains',
       'maxContains',
-      'propertyNames',
       'dependentRequired',
       'dependentSchemas',
       'unevaluatedProperties',

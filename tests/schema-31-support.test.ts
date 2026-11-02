@@ -719,6 +719,91 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
       );
     });
 
+    it('enforces propertyNames on every key, including additional ones', () => {
+      const schema = compileSource({
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        propertyNames: { pattern: '^[a-z]+$' },
+      });
+      assert(schema.safeParse({}).success);
+      assert(schema.safeParse({ id: 'x', extra: 1 }).success);
+      assert(!schema.safeParse({ id: 'x', Extra: 1 }).success);
+      assert(!schema.safeParse({ 'a-b': 1 }).success);
+    });
+
+    it('supports typed, enum, length, $ref and boolean propertyNames', () => {
+      const compile = createSchemaCompiler({
+        components: { schemas: { Key: { type: 'string', maxLength: 3 } } },
+      });
+      const build = (propertyNames: unknown) =>
+        compile({
+          source: { type: 'object', propertyNames } as JsonObject,
+          location: '/components/schemas/TestSchema',
+        });
+      assert(build({ enum: ['a', 'b'] }).safeParse({ a: 1 }).success);
+      assert(!build({ enum: ['a', 'b'] }).safeParse({ c: 1 }).success);
+      assert(!build({ type: 'string', minLength: 2 }).safeParse({ a: 1 }).success);
+      assert(build({ $ref: '#/components/schemas/Key' }).safeParse({ abc: 1 }).success);
+      assert(!build({ $ref: '#/components/schemas/Key' }).safeParse({ abcd: 1 }).success);
+      assert(build(true).safeParse({ anything: 1 }).success);
+      assert(build(false).safeParse({}).success);
+      assert(!build(false).safeParse({ a: 1 }).success);
+    });
+
+    it('requires an explicit object type and a valid schema for propertyNames', () => {
+      assert.throws(
+        () => compileSource({ propertyNames: { pattern: '^a$' } }),
+        /object constraints require a compatible explicit type/,
+      );
+      assert.throws(() => compileSource({ type: 'object', propertyNames: 'x' }), /propertyNames/);
+      assert.throws(
+        () =>
+          compileSource({ type: 'object', propertyNames: { type: 'string', format: 'hostname' } }),
+        /unsupported format hostname/,
+      );
+    });
+
+    it('ignores propertyNames on a non-object type', () => {
+      assert(
+        compileSource({ type: 'string', propertyNames: { pattern: '^a$' } }).safeParse('b').success,
+      );
+    });
+
+    it('applies propertyNames to untyped members of allOf, anyOf and oneOf', () => {
+      const allOf = compileSource({
+        type: 'object',
+        propertyNames: { allOf: [{ pattern: '^a' }, { maxLength: 3 }] },
+      });
+      assert(allOf.safeParse({ abc: 1 }).success);
+      assert(!allOf.safeParse({ abcd: 1 }).success);
+      assert(!allOf.safeParse({ bc: 1 }).success);
+      const oneOf = compileSource({
+        type: 'object',
+        propertyNames: { oneOf: [{ enum: ['a'] }, { enum: ['b'] }] },
+      });
+      assert(oneOf.safeParse({ a: 1 }).success);
+      assert(!oneOf.safeParse({ c: 1 }).success);
+    });
+
+    it('does not apply propertyNames to a key that only holds its default', () => {
+      const schema = compileSource({
+        type: 'object',
+        properties: { Foo_Bar: { type: 'string', default: 'x' } },
+        propertyNames: { pattern: '^[a-z]+$' },
+      });
+      assert(schema.safeParse({}).success);
+      assert(schema.safeParse({ Foo_Bar: 'x' }).success);
+      assert(!schema.safeParse({ Foo_Bar: 'y' }).success);
+      assert(!schema.safeParse({ Other: 1 }).success);
+      const closed = compileSource({
+        type: 'object',
+        properties: { id: { type: 'string', default: 'x' } },
+        propertyNames: false,
+      });
+      assert(closed.safeParse({}).success);
+      assert(!closed.safeParse({ extra: 1 }).success);
+    });
+
     it('compiles if/then/else conditionals', () => {
       const schema = compileSource({
         type: 'object',
