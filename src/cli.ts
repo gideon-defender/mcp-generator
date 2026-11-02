@@ -36,8 +36,9 @@ Usage:
 
 build:
   [config]          Project config (JSON or YAML) inside the working directory.
-                    Default: ./mcp.config.json. Writes tool-names.json and
-                    contract-revision.json to output.dir (default: dist).
+                    Default: ./mcp.config.json. Writes a runnable stdio server
+                    plus tool-names.json, contract-revision.json, and artifact.json
+                    to output.dir (default: dist).
 
 audit:
   --spec <path>     OpenAPI 3.0.x or 3.1.x document (JSON or YAML). Required.

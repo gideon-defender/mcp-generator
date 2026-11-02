@@ -1,10 +1,27 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { readDocument } from '../fs/read-document.js';
 import { assertPathWithinCwd } from '../fs/safe-path.js';
 import { compileTools } from '../tools.js';
 import type { McpProjectConfig } from '../config/schema.js';
+
+async function readGeneratorPackage(): Promise<{
+  name: string;
+  version: string;
+  dependencies: Record<string, string>;
+}> {
+  const packageText = await readFile(new URL('../../package.json', import.meta.url), 'utf8');
+  return JSON.parse(packageText) as {
+    name: string;
+    version: string;
+    dependencies: Record<string, string>;
+  };
+}
+
+function exactDependencyVersion(versionRange: string): string {
+  return versionRange.replace(/^[~^<>=v\s]+/, '').trim();
+}
 
 export async function buildFromConfig(config: McpProjectConfig, cwd: string = process.cwd()) {
   const resolvedCwd = resolve(cwd);
@@ -15,6 +32,9 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   assertPathWithinCwd(specPath, resolvedCwd, 'spec.path');
   assertPathWithinCwd(overlayPath, resolvedCwd, 'overlay');
   assertPathWithinCwd(outputDir, resolvedCwd, 'output.dir');
+  if (outputDir === resolvedCwd) {
+    throw new Error('output.dir must be a subdirectory of the working directory');
+  }
 
   const { text: specText, value: source } = await readDocument({
     filePath: specPath,
@@ -34,6 +54,16 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
     throw new Error(`Failed to compile tools: ${err instanceof Error ? err.message : String(err)}`);
   }
   const toolNames = tools.map(({ name, description }) => ({ name, description }));
+  const specSha256 = createHash('sha256').update(specText).digest('hex');
+  const overlaySha256 = createHash('sha256').update(overlayText).digest('hex');
+  const name = config.identity?.name ?? 'mcp-server';
+  const version = config.identity?.version ?? '0.0.0';
+  const generatorPackage = await readGeneratorPackage();
+  const sdkVersionRange = generatorPackage.dependencies['@modelcontextprotocol/sdk'];
+  if (!sdkVersionRange) {
+    throw new Error('Generator package is missing @modelcontextprotocol/sdk dependency metadata');
+  }
+
   await mkdir(outputDir, { recursive: true });
   await writeFile(resolve(outputDir, 'tool-names.json'), `${JSON.stringify(toolNames, null, 2)}\n`);
   await writeFile(
@@ -41,10 +71,76 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
     `${JSON.stringify(
       {
         name: config.identity?.name,
-        specSha256: createHash('sha256').update(specText).digest('hex'),
-        overlaySha256: createHash('sha256').update(overlayText).digest('hex'),
+        specSha256,
+        overlaySha256,
         tools: tools.length,
-        version: config.identity?.version ?? '0.0.0',
+        version,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const packageName =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[-._]+|-+$/g, '') || 'mcp-server';
+  const generatedPackageText = `${JSON.stringify(
+    {
+      name: packageName,
+      version,
+      private: true,
+      type: 'module',
+      scripts: { start: 'node server.mjs' },
+      dependencies: {
+        [generatorPackage.name]: config.output?.generatorDependency ?? generatorPackage.version,
+        '@modelcontextprotocol/sdk': exactDependencyVersion(sdkVersionRange),
+      },
+    },
+    null,
+    2,
+  )}\n`;
+  await writeFile(resolve(outputDir, 'package.json'), generatedPackageText);
+
+  const serverEntry = `import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createOwnedServer } from '@gideon/mcp-generator';
+
+const source = ${JSON.stringify(source, null, 2)};
+const overlay = ${JSON.stringify(overlay, null, 2)};
+
+const apiKey = process.env.MCP_GENERATOR_APIKEY?.trim();
+const bearerToken = process.env.MCP_GENERATOR_BEARER_TOKEN?.trim();
+if ((!apiKey && !bearerToken) || (apiKey && bearerToken)) {
+  throw new Error('Provide exactly one of MCP_GENERATOR_APIKEY or MCP_GENERATOR_BEARER_TOKEN');
+}
+
+const apiOptions = apiKey ? { apiKey } : { bearerToken };
+const server = createOwnedServer({
+  name: ${JSON.stringify(name)},
+  version: ${JSON.stringify(version)},
+  source,
+  overlay,
+  getOptions: () => apiOptions,
+});
+
+await server.connect(new StdioServerTransport());
+`;
+  await writeFile(resolve(outputDir, 'server.mjs'), serverEntry);
+
+  await writeFile(
+    resolve(outputDir, 'artifact.json'),
+    `${JSON.stringify(
+      {
+        format: 1,
+        name,
+        version,
+        specSha256,
+        overlaySha256,
+        tools: tools.length,
+        entrypoint: 'server.mjs',
+        packageSha256: createHash('sha256').update(generatedPackageText).digest('hex'),
+        serverSha256: createHash('sha256').update(serverEntry).digest('hex'),
       },
       null,
       2,

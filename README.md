@@ -50,7 +50,12 @@ node dist/cli.js build [./mcp.config.json]
 Outputs:
 
 - Audit: `report.json` (machine-readable inventory + findings) and `report.md` (human summary) under `audits/<spec-name>/` by default
-- Build: `tool-names.json` and `contract-revision.json` to `output.dir` (default `dist`)
+- Build: `server.mjs`, `package.json`, `artifact.json`, `tool-names.json`, and
+  `contract-revision.json` under `output.dir` (default `dist`). The artifact
+  depends on `@gideon/mcp-generator`, which is not on the public npm registry, so
+  set `output.generatorDependency` first (see Build below). Then run
+  `npm install` and `npm start` in `output.dir` to serve over stdio with the
+  `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` environment variable.
 
 ### What the audit does
 
@@ -246,6 +251,23 @@ Describe a project in `mcp.config.json` (JSON or YAML, see `mcp.config.example.j
 mcp-generator build [./mcp.config.json]
 ```
 
-All paths must stay inside the working directory. The build writes
-`tool-names.json` and `contract-revision.json` (spec and overlay SHA-256, tool
-count, name, version) to `output.dir` (default `dist`).
+All paths must stay inside the working directory. The build writes a runnable
+stdio server plus `artifact.json`, `tool-names.json`, and
+`contract-revision.json` (spec and overlay SHA-256, tool count, name, version)
+to `output.dir` (default `dist`).
+
+```sh
+cd dist
+npm install
+npm start
+```
+
+Set `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` before starting the
+generated server to provide upstream API credentials.
+
+The artifact depends on `@gideon/mcp-generator`, which is not on the public npm
+registry. Set `output.generatorDependency` to any npm dependency spec that can
+resolve it, for example `file:../mcp-generator-0.1.0.tgz` (from `npm pack` in
+the generator checkout, which builds `dist/` first) or a git URL. Without it,
+`npm install` in the artifact fails, because the default is the generator's own
+version (`0.1.0`).
