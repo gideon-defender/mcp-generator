@@ -58,6 +58,9 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   const overlaySha256 = createHash('sha256').update(overlayText).digest('hex');
   const name = config.identity?.name ?? 'mcp-server';
   const version = config.identity?.version ?? '0.0.0';
+  const auth = config.auth;
+  const hosted = config.hosted;
+  const isHosted = hosted !== undefined;
   const generatorPackage = await readGeneratorPackage();
   const sdkVersionRange = generatorPackage.dependencies['@modelcontextprotocol/sdk'];
   if (!sdkVersionRange) {
@@ -96,6 +99,12 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
       dependencies: {
         [generatorPackage.name]: config.output?.generatorDependency ?? generatorPackage.version,
         '@modelcontextprotocol/sdk': exactDependencyVersion(sdkVersionRange),
+        ...(hosted
+          ? {
+              express: exactDependencyVersion(generatorPackage.dependencies['express'] ?? '^5.2.1'),
+              jose: exactDependencyVersion(generatorPackage.dependencies['jose'] ?? '^6.2.0'),
+            }
+          : {}),
       },
     },
     null,
@@ -103,7 +112,48 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   )}\n`;
   await writeFile(resolve(outputDir, 'package.json'), generatedPackageText);
 
-  const serverEntry = `import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+  const authMode = auth?.mode;
+  if (isHosted && authMode !== 'oauth')
+    throw new Error('Hosted builds require auth.mode to be "oauth"');
+  const hostedAuthEntry = `const authAdapter = oauthAuth({
+  issuer: ${JSON.stringify(auth?.issuer ?? '')},
+  audience: ${JSON.stringify(auth?.audience ?? '')},
+  jwksUrl: ${JSON.stringify(auth?.jwksUrl ?? '')},
+  requiredScopes: ${JSON.stringify(auth?.requiredScopes ?? [])},
+  upstreamBearerToken: ${JSON.stringify(auth?.upstreamBearerToken ?? false)},
+});`;
+  const serverEntry = isHosted
+    ? `import { createOwnedServer, oauthAuth, createHostedServer } from '@gideon/mcp-generator';
+
+const source = ${JSON.stringify(source, null, 2)};
+const overlay = ${JSON.stringify(overlay, null, 2)};
+
+${hostedAuthEntry}
+const createServerForSession = () => createOwnedServer({
+  name: ${JSON.stringify(name)},
+  version: ${JSON.stringify(version)},
+  source,
+  overlay,
+  authAdapter,
+  transport: ${JSON.stringify(hosted?.transport ?? 'http')},
+});
+const hostedServer = await createHostedServer({
+  createServerForSession,
+  port: ${JSON.stringify(hosted?.port ?? 3000)},
+  transport: ${JSON.stringify(hosted?.transport ?? 'http')},
+  authAdapter,
+  host: ${JSON.stringify(hosted?.host ?? '127.0.0.1')},
+  maxRequestBodyBytes: ${JSON.stringify(hosted?.maxRequestBodyBytes ?? 1_048_576)},
+  allowedOrigins: ${JSON.stringify(hosted?.allowedOrigins ?? [])},
+});
+await hostedServer.listen();
+const shutdown = async () => {
+  await hostedServer.close();
+};
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
+`
+    : `import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createOwnedServer } from '@gideon/mcp-generator';
 
 const source = ${JSON.stringify(source, null, 2)};

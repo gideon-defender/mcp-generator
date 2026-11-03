@@ -4,6 +4,7 @@ import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sd
 import { errorResult, executeRequest, type ApiOptions } from './client.js';
 import { registerDiscovery } from './server/discovery.js';
 import { compileTools } from './tools.js';
+import type { AuthAdapter } from './auth/types.js';
 
 export type ExecutionContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 export type AnnotationFilter = Partial<
@@ -20,6 +21,8 @@ export function createOwnedServer({
   allowedTools,
   annotationFilter = {},
   getOptions,
+  authAdapter,
+  transport = 'stdio',
 }: {
   /** Product identity, supplied by the caller — the core carries no product branding. */
   name: string;
@@ -30,7 +33,11 @@ export function createOwnedServer({
   allowedTools?: ReadonlySet<string>;
   annotationFilter?: AnnotationFilter;
   /** Resolve credentials for each call, never a shared hosted-user credential. */
-  getOptions: (context: ExecutionContext) => ApiOptions | Promise<ApiOptions>;
+  getOptions?: (context: ExecutionContext) => ApiOptions | Promise<ApiOptions>;
+  /** Optional auth adapter to use for credential resolution. */
+  authAdapter?: AuthAdapter;
+  /** Transport to use for the API. */
+  transport?: 'stdio' | 'http' | 'sse';
 }) {
   const registry = compileTools({ source, overlay });
   const tools = registry.tools.filter(
@@ -41,6 +48,26 @@ export function createOwnedServer({
       ),
   );
   const server = new McpServer({ name, version });
+  const resolveOptions = async (context: ExecutionContext): Promise<ApiOptions> => {
+    if (authAdapter) {
+      const headers = new Headers();
+      if (context.requestInfo?.headers) {
+        for (const [key, value] of Object.entries(context.requestInfo.headers)) {
+          if (typeof value === 'string') headers.set(key, value);
+          else if (Array.isArray(value)) headers.set(key, value.join(','));
+        }
+      }
+      const resolution = await authAdapter.authenticate({
+        headers,
+        context,
+        transport,
+      });
+      if (!resolution.ok) throw new Error(resolution.message);
+      return resolution.apiOptions;
+    }
+    if (!getOptions) throw new Error('API credential configuration is missing.');
+    return getOptions(context);
+  };
   const execute = async ({
     name,
     input,
@@ -58,7 +85,7 @@ export function createOwnedServer({
       return await executeRequest({
         tool,
         input: parsed.data,
-        options: await getOptions(context),
+        options: await resolveOptions(context),
         servers: registry.servers,
         signal: context.signal,
       });
