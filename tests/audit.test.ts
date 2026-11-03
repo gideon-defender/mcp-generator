@@ -255,12 +255,11 @@ describe('runAudit catalogue', () => {
     assert.equal(report.summary.readiness, 'blocked');
   });
 
-  it('catalogues 3.1 constructs as compat31, not blockers', async () => {
+  it('catalogues natively supported 3.1 constructs as info and the rest as compat31, not blockers', async () => {
     const report = await runAudit({ specPath: fixture('openapi-31.yaml') });
     const compat = report.findings.filter((finding) => finding.severity === 'compat31');
     const compatCodes = new Set(compat.map((finding) => finding.code));
-    assert.ok(compatCodes.has('SPEC31_TYPE_ARRAY'));
-    assert.ok(compatCodes.has('SPEC31_EXCLUSIVE_BOUND'));
+    // Phase 3: type arrays and exclusive bounds are now natively supported in 3.1, marked as 'info'
     assert.ok(compatCodes.has('SPEC31_KEYWORD'));
     const keywords = compat
       .filter((finding) => finding.code === 'SPEC31_KEYWORD')
@@ -268,6 +267,46 @@ describe('runAudit catalogue', () => {
     assert.ok(keywords.some((message) => message.includes('$comment')));
     assert.ok(!keywords.some((message) => message.includes('propertyNames')));
     assert.equal(report.findings.filter((finding) => finding.severity === 'blocker').length, 0);
+    // Verify that type arrays and exclusive bounds are now 'info'
+    const info = report.findings.filter((finding) => finding.severity === 'info');
+    const infoCodes = new Set(info.map((finding) => finding.code));
+    assert.ok(infoCodes.has('SPEC31_TYPE_ARRAY'));
+    assert.ok(infoCodes.has('SPEC31_EXCLUSIVE_BOUND'));
+  });
+
+  it('catalogues type arrays and numeric exclusive bounds as blockers in an OpenAPI 3.0 document', async () => {
+    const { audit } = createAudit({ prefix: 'audit-dialect-3-' });
+    const spec = baseSpec({
+      '/v1/a': {
+        get: okOperation({
+          operationId: 'getThing',
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      nullableName: { type: ['string', 'null'] },
+                      count: { type: 'integer', exclusiveMinimum: 3 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      },
+    });
+    const report = await audit({ spec });
+    const blockerCodes = new Set(
+      report.findings
+        .filter((finding) => finding.severity === 'blocker')
+        .map((finding) => finding.code),
+    );
+    assert.ok(blockerCodes.has('SPEC31_TYPE_ARRAY'));
+    assert.ok(blockerCodes.has('SPEC31_EXCLUSIVE_BOUND'));
   });
 });
 

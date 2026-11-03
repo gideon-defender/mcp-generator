@@ -147,11 +147,15 @@ function checkSchema({
       }
       const type = schema['type'];
       if (Array.isArray(type)) {
+        // Phase 3: type arrays are natively supported in 3.1. A 3.0 document
+        // still fails the audit; the guard stays for that dialect.
         push({
           code: 'SPEC31_TYPE_ARRAY',
-          severity: is31 ? 'compat31' : 'blocker',
+          severity: is31 ? 'info' : 'blocker',
           category: 'openapi-3.1',
-          message: `Type array (3.1 nullable form): ${type.map(String).join(', ')}`,
+          message: is31
+            ? `Type array (3.1 nullable form) — natively supported: ${type.map(String).join(', ')}`
+            : `Type array (3.1 nullable form): ${type.map(String).join(', ')}`,
           location,
         });
         for (const member of type) {
@@ -183,15 +187,14 @@ function checkSchema({
         });
       } else if (typeof type === 'string' && type === 'null') {
         // 'null' as a type belongs to JSON Schema 2020-12; 3.0 expresses the
-        // same thing with nullable, and the baseline compiler rejects the type.
+        // same thing with nullable. Phase 3 natively supports this.
         push(
           is31
             ? {
                 code: 'SPEC31_TYPE_NULL',
-                severity: 'compat31',
+                severity: 'info',
                 category: 'openapi-3.1',
-                message:
-                  'Solo null type is a JSON Schema 2020-12 construct; it needs 3.1-native handling',
+                message: 'Solo null type (JSON Schema 2020-12) — natively supported in Phase 3',
                 location,
               }
             : {
@@ -206,11 +209,15 @@ function checkSchema({
       for (const key of ['exclusiveMinimum', 'exclusiveMaximum'] as const) {
         const bound = schema[key];
         if (typeof bound === 'number') {
+          // Phase 3: numeric exclusive bounds are natively supported in 3.1.
+          // A 3.0 document still fails the audit; the guard stays for that dialect.
           push({
             code: 'SPEC31_EXCLUSIVE_BOUND',
-            severity: is31 ? 'compat31' : 'blocker',
+            severity: is31 ? 'info' : 'blocker',
             category: 'openapi-3.1',
-            message: `${key} is numeric (3.1 form), not boolean`,
+            message: is31
+              ? `${key} is numeric (3.1 form) — natively supported in Phase 3`
+              : `${key} is numeric (3.1 form), not boolean`,
             location,
           });
         } else if (is31 && typeof bound === 'boolean') {

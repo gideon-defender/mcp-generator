@@ -75,12 +75,12 @@ Outputs:
   read, everything else = mutate).
 - **Catalogues findings** with stable codes and severities:
 
-  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-  | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                                                                                                   |
-  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler rejects, such as `$anchor` or `$dynamicRef`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`, `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`) are not flagged. |
-  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                                                                                            |
-  | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                                                                                                                                         |
+  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                        |
+  | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                                  |
+  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct that still needs 3.1-native handling: 2020-12 keywords the compiler rejects, such as `$anchor` or `$dynamicRef`. Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`, `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`) are not flagged. |
+  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                           |
+  | `info`     | Noted and ignored on purpose. In a 3.1 document: type arrays, solo null types, and numeric exclusive bounds (Phase 3 natively supports them; in a 3.0 document those same constructs are blockers). Also: deprecated operation, webhooks, undocumented spec paths.                                                                                                                                             |
 
 - **Derives tool names generically** from any `operationId` style
   (camelCase, snake_case, kebab-case, `XxxController_op_v1`). Derivation is a
@@ -100,12 +100,12 @@ really would fail or misrepresent this", not a theoretical concern.
 
 ### Verified against (Phase 0 acceptance)
 
-| Spec                                                        | OpenAPI | Operations                  | Readiness                                                     |
-| ----------------------------------------------------------- | ------- | --------------------------- | ------------------------------------------------------------- |
-| OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)       |
-| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 11 blockers, 677 compat31, 504 missing descriptions |
-| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 2 blockers, 55 compat31, 139 warnings               |
-| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | ready with warnings — 0 blockers, 0 compat31, 21 warnings     |
+| Spec                                                        | OpenAPI | Operations                  | Readiness                                                 |
+| ----------------------------------------------------------- | ------- | --------------------------- | --------------------------------------------------------- |
+| OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)   |
+| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 11 blockers, 0 compat31, 7 warnings             |
+| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 2 blockers, 0 compat31, 139 warnings            |
+| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | ready with warnings — 0 blockers, 0 compat31, 21 warnings |
 
 The audit reports no current duplicate path keys or YAML flow-mapping comma
 issues in the Auth spec. It reports 122 documented paths that are not in the
@@ -162,7 +162,7 @@ this generator's `start` and generated `server.mjs` cover less:
 
 | Area         | OpenComp                                                                                                                               | Generator                                                                                                                                                                                                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transports   | stdio, SSE (`--transport sse`) and Streamable HTTP (`serve`, `/mcp`), `/healthz`                                                       | stdio; with `--hosted` (or a hosted build): stateless Streamable HTTP (`/mcp`, POST only), SSE (`/sse`, `/messages`) and `/healthz`                                                                                                                                       |
+| Transports   | stdio, SSE (`--transport sse`) and Streamable HTTP (`serve`, `/mcp`), `/healthz`                                                       | stdio (default); hosted: Streamable HTTP (`/mcp`, POST only) or SSE (`/sse`, `/messages`) via `--hosted --transport http/sse` plus `/healthz` on all transports                                                                                                           |
 | Flags        | `--port`, `--transport`, `--tool-annotations`, `--server-index`, `--log-level`, `--env`, `--disable-static-auth`, `--help`/`--version` | `--spec`, `--overlay`, `--name`, `--version`, `--server-url`, `--tool`, `--mode`, `--apikey`/`--bearer`, `--timeout`, `--hosted`, `--transport`, `--port`, `--host`, `--allowed-origin`, `--oauth-*`; no `--tool-annotations`, `--server-index`, `--log-level` or `--env` |
 | Credentials  | `--apikey`, then `OPENCOMP_APIKEY`; per-request `apikey` header over HTTP                                                              | stdio: `--apikey`/`--bearer` or `MCP_GENERATOR_APIKEY`/`MCP_GENERATOR_BEARER_TOKEN`; hosted: per-request OAuth bearer token only (no `apikey` header, no static fallback)                                                                                                 |
 | Lifecycle    | SIGTERM/SIGINT close the server; startup errors are sanitized so credential flags never reach stderr                                   | hosted servers close on SIGTERM/SIGINT; stdio has no signal handling                                                                                                                                                                                                      |
@@ -267,6 +267,39 @@ uniqueItems: true
 minProperties: 1
 maxProperties: 10
 ```
+
+**Discriminator for Tagged Unions**
+
+```yaml
+oneOf:
+  - $ref: '#/components/schemas/Cat'
+  - $ref: '#/components/schemas/Dog'
+discriminator:
+  propertyName: type
+  mapping:
+    cat: Cat
+    dog: Dog
+```
+
+**Complete Keyword Support**
+
+| Feature                                                  | Implementation                   |
+| -------------------------------------------------------- | -------------------------------- |
+| Type arrays with null                                    | ✅ Natively compiled             |
+| Numeric exclusive bounds                                 | ✅ Natively compiled             |
+| `const` (scalars, objects, arrays)                       | ✅ Natively compiled             |
+| `uniqueItems`                                            | ✅ Array constraint              |
+| `minProperties` / `maxProperties`                        | ✅ Object size constraints       |
+| `discriminator` (tag routing)                            | ✅ Implicit and explicit mapping |
+| `propertyNames`                                          | ✅ Dynamic key validation        |
+| `prefixItems` / `items`                                  | ✅ Tuple and array composition   |
+| `contains` / `minContains` / `maxContains`               | ✅ Array item matching           |
+| `dependentRequired` / `dependentSchemas`                 | ✅ Conditional properties        |
+| `unevaluatedProperties` / `unevaluatedItems`             | ✅ Validation-time constraints   |
+| `contentEncoding` / `contentMediaType` / `contentSchema` | ✅ Base64 and JSON content       |
+| `if` / `then` / `else`                                   | ✅ Conditional schemas           |
+
+**Audit Impact**: In a 3.1 document, type arrays, solo null types, and numeric exclusive bounds are now `info` (noted) instead of `compat31` (required for 3.1 support). Regenerating the reports under `audits/` shows 0 `compat31` everywhere — Gideon Auth's 677 construct findings (638 type arrays, 37 solo null types, 2 exclusive bounds) and Agent Communications' 55 are all `info`. In a 3.0 document these same constructs are blockers. 2020-12 keywords the compiler still rejects are unchanged and stay `compat31`. Auth's missing-description warnings went from 504 to 0 in the current report (7 warnings remain, all `BODY_MULTIPLE_MIME`).
 
 **Type Safety**: Const values are validated against their schema's type at compile time.
 Complex const values (objects, arrays) are compared structurally, independent of key order.
