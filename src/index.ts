@@ -24,6 +24,11 @@ export { createOwnedServer, type ExecutionContext, type AnnotationFilter } from 
 export { registerDiscovery } from './server/discovery.js';
 export { errorResult, executeRequest, type ApiOptions } from './client.js';
 export { resolveApiCredential } from './credentials.js';
+export type { AuthAdapter, AuthContext, AuthResolution } from './auth/types.js';
+export { staticAuth, rejectUnauthenticated } from './auth/adapters.js';
+export { oauthAuth, type OAuthAuthOptions } from './auth/oauth.js';
+export { createHostedServer, type HostedServeOptions } from './serve.js';
+export { runHosted, type ServeOptions } from './cli/serve.js';
 export { McpProjectConfigSchema, type McpProjectConfig } from './config/schema.js';
 export { loadConfig, resolveConfigPath } from './config/loader.js';
 export { buildFromConfig } from './build/generate.js';

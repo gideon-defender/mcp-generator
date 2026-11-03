@@ -24,6 +24,8 @@ import type { AuditReport } from './audit/types.js';
 import { buildFromConfig } from './build/generate.js';
 import { runStart } from './cli/start.js';
 import { loadConfig, resolveConfigPath } from './config/loader.js';
+import { oauthAuth } from './auth/oauth.js';
+import type { AuthAdapter } from './auth/types.js';
 
 const HELP = `mcp-generator — OpenAPI 3.0+ to MCP
 
@@ -37,6 +39,7 @@ Usage:
 build:
   [config]          Project config (JSON or YAML) inside the working directory.
                     Default: ./mcp.config.json. Writes a runnable stdio server
+                    (hosted HTTP/SSE when the config sets auth and hosted)
                     plus tool-names.json, contract-revision.json, and artifact.json
                     to output.dir (default: dist).
 
@@ -66,8 +69,19 @@ start:
   --bearer <token>    Static bearer token, sent as Authorization. Falls back to
                       MCP_GENERATOR_BEARER_TOKEN. Mutually exclusive with --apikey.
   --timeout <ms>      Per-request deadline in milliseconds. Default: 120000.
+  --hosted            Serve hosted HTTP or SSE instead of stdio; requires OAuth flags.
+  --transport <type>  Hosted transport: "http" (default) or "sse".
+  --port <port>       Hosted listen port. Default: 3000.
+  --host <host>       Hosted listen host. Default: 127.0.0.1.
+  --allowed-origin <origin>  Allowed browser origin. Repeatable.
+  --oauth-issuer <url>       Expected token issuer. Required in hosted mode.
+  --oauth-audience <url>     Exact MCP resource/audience. Required in hosted mode.
+  --oauth-jwks-url <url>     JWKS endpoint for token verification. Required in hosted mode.
+  --oauth-scope <scope>      Required OAuth scope. Repeatable.
+  --oauth-forward-token      Send the validated MCP token to the API as its bearer token.
+                             Off by default; use only when the API accepts this audience.
 
-Connects over stdio and runs until the client disconnects.
+stdio or hosted serving runs until the process is disconnected or stopped.
 
   --help            Show this help.
 `;
@@ -431,6 +445,16 @@ async function main(): Promise<void> {
       apikey: { type: 'string' },
       bearer: { type: 'string' },
       timeout: { type: 'string' },
+      hosted: { type: 'boolean', default: false },
+      transport: { type: 'string' },
+      port: { type: 'string' },
+      host: { type: 'string' },
+      'allowed-origin': { type: 'string', multiple: true },
+      'oauth-issuer': { type: 'string' },
+      'oauth-audience': { type: 'string' },
+      'oauth-jwks-url': { type: 'string' },
+      'oauth-scope': { type: 'string', multiple: true },
+      'oauth-forward-token': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -532,6 +556,16 @@ async function runStartCommand({
     apikey?: string;
     bearer?: string;
     timeout?: string;
+    hosted?: boolean;
+    transport?: string;
+    port?: string;
+    host?: string;
+    'allowed-origin'?: string[];
+    'oauth-issuer'?: string;
+    'oauth-audience'?: string;
+    'oauth-jwks-url'?: string;
+    'oauth-scope'?: string[];
+    'oauth-forward-token'?: boolean;
   };
 }): Promise<void> {
   if (!values.spec || values.spec.trim() === '') throw new Error('Missing --spec <path>');
@@ -540,25 +574,72 @@ async function runStartCommand({
     throw new Error('Missing --version <version>');
   if (values.mode !== undefined && values.mode !== 'static' && values.mode !== 'dynamic')
     throw new Error('--mode must be "static" or "dynamic"');
+  if (values.transport !== undefined && values.transport !== 'http' && values.transport !== 'sse')
+    throw new Error('--transport must be "http" or "sse"');
+  const hosted = values.hosted === true;
+  const oauthIssuer = values['oauth-issuer'];
+  const oauthAudience = values['oauth-audience'];
+  const oauthJwksUrl = values['oauth-jwks-url'];
+  const oauthConfigured =
+    oauthIssuer !== undefined ||
+    oauthAudience !== undefined ||
+    oauthJwksUrl !== undefined ||
+    values['oauth-forward-token'] === true;
+  if (!hosted && oauthConfigured) throw new Error('OAuth options require --hosted mode');
+  if (hosted && !oauthConfigured)
+    throw new Error('Hosted mode requires --oauth-issuer, --oauth-audience, and --oauth-jwks-url');
+  if (oauthConfigured && (!oauthIssuer || !oauthAudience || !oauthJwksUrl))
+    throw new Error('OAuth auth requires --oauth-issuer, --oauth-audience, and --oauth-jwks-url');
   const apiKey = values.apikey ?? process.env['MCP_GENERATOR_APIKEY'];
   const bearerToken = values.bearer ?? process.env['MCP_GENERATOR_BEARER_TOKEN'];
-  if ((!apiKey && !bearerToken) || (apiKey && bearerToken))
+  if (!hosted && ((!apiKey && !bearerToken) || (apiKey && bearerToken)))
     throw new Error('Provide exactly one of --apikey or --bearer (or their env var fallback)');
+  if (
+    hosted &&
+    (apiKey !== undefined ||
+      bearerToken !== undefined ||
+      values.apikey !== undefined ||
+      values.bearer !== undefined)
+  )
+    throw new Error('Static API credentials are not allowed in hosted mode; use OAuth');
   let timeoutMs: number | undefined;
   if (values.timeout !== undefined) {
     timeoutMs = Number(values.timeout);
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
       throw new Error('--timeout must be a positive number');
   }
+  let port: number | undefined;
+  if (values.port !== undefined) {
+    port = Number(values.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error('--port must be an integer between 1 and 65535');
+  }
+  let authAdapter: AuthAdapter | undefined;
+  if (oauthIssuer && oauthAudience && oauthJwksUrl) {
+    authAdapter = oauthAuth({
+      issuer: oauthIssuer,
+      audience: oauthAudience,
+      jwksUrl: oauthJwksUrl,
+      ...(values['oauth-scope'] ? { requiredScopes: values['oauth-scope'] } : {}),
+      upstreamBearerToken: values['oauth-forward-token'] === true,
+    });
+  }
   await runStart({
     specPath: resolve(values.spec),
     name: values.name,
     version: values.version,
+    hosted,
     ...(values.overlay ? { overlayPath: resolve(values.overlay) } : {}),
     ...(values.mode ? { mode: values.mode as 'static' | 'dynamic' } : {}),
     ...(values.tool ? { allowedTools: new Set(values.tool) } : {}),
     ...(values['server-url'] ? { serverUrl: values['server-url'] } : {}),
-    ...(apiKey ? { apiKey } : { bearerToken: bearerToken! }),
+    ...(!hosted && apiKey ? { apiKey } : {}),
+    ...(!hosted && bearerToken ? { bearerToken } : {}),
+    ...(authAdapter ? { authAdapter } : {}),
+    ...(values.transport ? { transport: values.transport as 'http' | 'sse' } : {}),
+    ...(port !== undefined ? { port } : {}),
+    ...(values.host ? { host: values.host } : {}),
+    ...(values['allowed-origin'] ? { allowedOrigins: values['allowed-origin'] } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   });
 }

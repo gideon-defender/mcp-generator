@@ -11,7 +11,7 @@ any other product repo. Products consume the generator; they do not live in it.
 > Hackathon** (October 26 – November 4, 2026), using Meta's $150 in Muse
 > usage credits.
 
-## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅
+## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅ · Phase 5 (auth + hosted serving) ✅
 
 Phase 0 answers, for any spec: _what operations exist, what would their MCP
 tools be called, and what exactly prevents or conditions faithful generation?_
@@ -30,6 +30,9 @@ Phase 4 is complete: multi-type arrays, complex const values, `if`/`then`/`else`
 other media types are annotations), overlay v2 allowlists, explicit classification, and
 policy metadata. Core vocabulary keywords such as `$id`, `$anchor`, `$dynamicRef` and
 `$defs` still fail the build.
+
+Phase 5 is complete: an auth adapter SPI, OAuth (JWT/JWKS) validation, and hosted
+Streamable HTTP / SSE serving. See [Phase 5](#phase-5-authentication-and-hosted-serving).
 
 ```sh
 pnpm install
@@ -57,6 +60,8 @@ Outputs:
   set `output.generatorDependency` first (see Build below). Then run
   `npm install` and `npm start` in `output.dir` to serve over stdio with the
   `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` environment variable.
+  With `auth` and `hosted` in the config, the artifact serves hosted HTTP/SSE with
+  OAuth instead (see Phase 5).
 
 ### What the audit does
 
@@ -151,23 +156,25 @@ model this generator's Phase 4 overlay is meant to formalize.
 ## Known gaps vs OpenComp's shipped server
 
 The tool registry matches (410 tools, same names, descriptions, input schemas and
-annotations over `tools/list`). The serving layer does not. OpenComp keeps its own
-vendored core plus a CLI and transport layer (`apps/mcp-server/src/cli*`); this
-generator's `start` and generated `server.mjs` cover less:
+annotations over `tools/list`). The serving layer still does not fully match. OpenComp
+keeps its own vendored core plus a CLI and transport layer (`apps/mcp-server/src/cli*`);
+this generator's `start` and generated `server.mjs` cover less:
 
-| Area         | OpenComp                                                                                                                               | Generator                                                                                                            |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Transports   | stdio, SSE (`--transport sse`) and Streamable HTTP (`serve`, `/mcp`), `/healthz`                                                       | stdio only                                                                                                           |
-| Flags        | `--port`, `--transport`, `--tool-annotations`, `--server-index`, `--log-level`, `--env`, `--disable-static-auth`, `--help`/`--version` | `--spec`, `--overlay`, `--name`, `--version`, `--server-url`, `--tool`, `--mode`, `--apikey`/`--bearer`, `--timeout` |
-| Credentials  | `--apikey`, then `OPENCOMP_APIKEY`; per-request `apikey` header over HTTP                                                              | `--apikey`/`--bearer`; generated server reads `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN`                 |
-| Lifecycle    | SIGTERM/SIGINT close the server; startup errors are sanitized so credential flags never reach stderr                                   | no signal handling                                                                                                   |
-| Hosted mode  | `--hosted`, `--public-url`, bearer validation against the product API, optional OIDC (`MCP_OIDC_*`)                                    | none; belongs to the Phase 5 auth adapter interface                                                                  |
-| Packaging    | single esbuild bundle (`dist-owned/`) plus MCP bundle manifest                                                                         | `server.mjs` and `package.json`; run `npm install` first (depends on `@gideon/mcp-generator`)                        |
-| Landing page | branded HTML at `/`                                                                                                                    | none (product-specific)                                                                                              |
+| Area         | OpenComp                                                                                                                               | Generator                                                                                                                                                                                                                                                                 |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transports   | stdio, SSE (`--transport sse`) and Streamable HTTP (`serve`, `/mcp`), `/healthz`                                                       | stdio; with `--hosted` (or a hosted build): stateless Streamable HTTP (`/mcp`, POST only), SSE (`/sse`, `/messages`) and `/healthz`                                                                                                                                       |
+| Flags        | `--port`, `--transport`, `--tool-annotations`, `--server-index`, `--log-level`, `--env`, `--disable-static-auth`, `--help`/`--version` | `--spec`, `--overlay`, `--name`, `--version`, `--server-url`, `--tool`, `--mode`, `--apikey`/`--bearer`, `--timeout`, `--hosted`, `--transport`, `--port`, `--host`, `--allowed-origin`, `--oauth-*`; no `--tool-annotations`, `--server-index`, `--log-level` or `--env` |
+| Credentials  | `--apikey`, then `OPENCOMP_APIKEY`; per-request `apikey` header over HTTP                                                              | stdio: `--apikey`/`--bearer` or `MCP_GENERATOR_APIKEY`/`MCP_GENERATOR_BEARER_TOKEN`; hosted: per-request OAuth bearer token only (no `apikey` header, no static fallback)                                                                                                 |
+| Lifecycle    | SIGTERM/SIGINT close the server; startup errors are sanitized so credential flags never reach stderr                                   | hosted servers close on SIGTERM/SIGINT; stdio has no signal handling                                                                                                                                                                                                      |
+| Hosted mode  | `--hosted`, `--public-url`, bearer validation against the product API, optional OIDC (`MCP_OIDC_*`)                                    | `--hosted` with JWT validation (issuer, audience, JWKS signature, expiry, scopes); no `--public-url`, protected-resource metadata, product-API validation or OIDC discovery                                                                                               |
+| Packaging    | single esbuild bundle (`dist-owned/`) plus MCP bundle manifest                                                                         | `server.mjs` and `package.json`; run `npm install` first (depends on `@gideon/mcp-generator`; hosted builds also add `express` and `jose`)                                                                                                                                |
+| Landing page | branded HTML at `/`                                                                                                                    | none (product-specific)                                                                                                                                                                                                                                                   |
 
-`createOwnedServer` already accepts `annotationFilter` and `serverIndex`; the missing
-pieces are CLI parsing, the HTTP transports (adds `express`) and the lifecycle
-handlers. Adopting this package in OpenComp is blocked on them.
+`createOwnedServer` accepts `annotationFilter`, and `serverIndex` is an `ApiOptions`
+field, but `start` exposes neither as a flag. Still missing before OpenComp can adopt
+this package: those flags, logging and `--env` handling, the per-request `apikey`
+header, product-API or OIDC token validation, protected-resource metadata, and
+stdio signal handling.
 
 ## Development
 
@@ -184,8 +191,8 @@ named parameters for functions with 2+ arguments, early returns.
 
 ## Roadmap
 
-Phases 0 (audit gate) and 1 (compiler core) are complete.
-Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is complete.
+Phases 0 (audit gate), 1 (compiler core), 2 (config-driven build), 3 (OpenAPI 3.1
+support), 4 (advanced 3.1) and 5 (auth and hosted serving) are complete.
 
 1. **Phase 1 (complete)** — product-neutral compiler/runtime core:
    schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
@@ -215,10 +222,12 @@ Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is comp
    `unevaluated*`, `content*`, and overlay v2:
    allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
    binding (used only when no `serverUrl` is configured).
-5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
-   audience, agent authorization), hand-authored composite tools, and the
+5. **Phase 5 (complete)** — auth adapter SPI (static, reject, OAuth with exact MCP
+   audience) and hosted Streamable HTTP / SSE serving. Agent authorization is not
+   implemented.
+6. **Phases 6–7** — hand-authored composite tools and the
    Gideon Identity MCP product (independently deployed).
-6. **Phase 8** — prove generalization with a second unrelated spec using only
+7. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
 
 ## Phase 3: OpenAPI 3.1 Support
@@ -280,7 +289,8 @@ mcp-generator build [./mcp.config.json]
 ```
 
 All paths must stay inside the working directory. The build writes a runnable
-stdio server plus `artifact.json`, `tool-names.json`, and
+server (stdio, or hosted when `auth` and `hosted` are set) plus `artifact.json`,
+`tool-names.json`, and
 `contract-revision.json` (spec and overlay SHA-256, tool count, name, version)
 to `output.dir` (default `dist`).
 
@@ -291,7 +301,8 @@ npm start
 ```
 
 Set `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` before starting the
-generated server to provide upstream API credentials.
+generated stdio server to provide upstream API credentials. A hosted artifact reads
+no static credentials; callers authenticate per request (see Phase 5).
 
 The artifact depends on `@gideon/mcp-generator`, which is not on the public npm
 registry. Set `output.generatorDependency` to any npm dependency spec that can
@@ -299,3 +310,41 @@ resolve it, for example `file:../mcp-generator-0.1.0.tgz` (from `npm pack` in
 the generator checkout, which builds `dist/` first) or a git URL. Without it,
 `npm install` in the artifact fails, because the default is the generator's own
 version (`0.1.0`).
+
+## Phase 5: Authentication and Hosted Serving
+
+Phase 5 adds a transport-independent authentication adapter and hosted HTTP/SSE serving.
+
+```sh
+# Local stdio deployment
+node dist/cli.js start --spec openapi.yaml --name example --version 1.0.0 \
+  --apikey "$MCP_API_KEY"
+
+# Hosted Streamable HTTP with exact OAuth issuer/audience validation
+node dist/cli.js start --spec openapi.yaml --name example --version 1.0.0 \
+  --hosted --transport http --port 3000 \
+  --oauth-issuer https://issuer.example.com \
+  --oauth-audience https://mcp.example.com \
+  --oauth-jwks-url https://issuer.example.com/.well-known/jwks.json \
+  --oauth-scope mcp.tools \
+  --oauth-forward-token
+```
+
+Hosted mode exposes `/mcp` for Streamable HTTP (stateless, POST only) or `/sse` plus `/messages` for legacy SSE, and `/healthz`. Hosted credentials are resolved per MCP request; static API-key and bearer environment credentials are not accepted as hosted fallbacks.
+
+A config-driven build produces a hosted server when the config sets both `auth` and `hosted`:
+
+```json
+{
+  "auth": {
+    "mode": "oauth",
+    "issuer": "https://issuer.example.com",
+    "audience": "https://mcp.example.com",
+    "jwksUrl": "https://issuer.example.com/.well-known/jwks.json",
+    "requiredScopes": ["mcp.tools"]
+  },
+  "hosted": { "transport": "http", "port": 3000, "allowedOrigins": [] }
+}
+```
+
+The public auth SPI exports `AuthAdapter`, static adapters, OAuth adapters, and hosted serving helpers from the package entrypoint. OAuth verification validates issuer, exact audience, signature, expiry, and required scopes. The upstream bearer option (`--oauth-forward-token`, `auth.upstreamBearerToken`) is off by default because it sends a token issued for the MCP server to the API; enable it only when the API accepts that audience. Without it, the token must carry an `api_key` claim, and callers without one receive 403.
