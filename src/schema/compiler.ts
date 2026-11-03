@@ -3,6 +3,7 @@ import { JsonObject, objectSchema } from '../openapi/metadata.js';
 import { compileValue, canonicalJson } from './value.js';
 import { readDiscriminator } from './discriminator.js';
 import { createCompositionCycleFinder } from './cycles.js';
+import { createUnevaluated } from './unevaluated.js';
 
 const keywords = new Set([
   '$ref',
@@ -80,6 +81,7 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
   }
 
   const findCompositionCycle = createCompositionCycleFinder(resolve);
+  const applyUnevaluated = createUnevaluated({ resolve, compile });
 
   function validate({ source, location }: { source: unknown; location: string }): void {
     const schema = objectSchema.parse(source);
@@ -95,22 +97,6 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       if (!keywords.has(key) && !key.startsWith('x-')) {
         throw new Error(`${location}: unsupported schema keyword ${key}`);
       }
-    }
-    const unsupportedPhase4Keywords = [
-      'prefixItems',
-      'contains',
-      'minContains',
-      'maxContains',
-      'dependentRequired',
-      'dependentSchemas',
-      'unevaluatedProperties',
-      'unevaluatedItems',
-      'contentEncoding',
-      'contentMediaType',
-      'contentSchema',
-    ];
-    for (const key of unsupportedPhase4Keywords) {
-      if (schema[key] !== undefined) throw new Error(`${location}: ${key} is not yet supported`);
     }
     if (schema['$ref'] !== undefined) {
       const ref = z.string().parse(schema['$ref']);
@@ -137,6 +123,8 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
               'readOnly',
               'writeOnly',
               'deprecated',
+              'unevaluatedProperties',
+              'unevaluatedItems',
             ].includes(key) && !key.startsWith('x-'),
         )
       ) {
@@ -165,6 +153,12 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       validate({ source: schema[key], location: `${location}/${key}` });
     }
     for (const key of ['if', 'then', 'else'] as const) {
+      if (schema[key] === undefined) continue;
+      const member = z.union([z.boolean(), objectSchema]).parse(schema[key]);
+      if (typeof member === 'boolean') continue;
+      validate({ source: member, location: `${location}/${key}` });
+    }
+    for (const key of ['unevaluatedProperties', 'unevaluatedItems'] as const) {
       if (schema[key] === undefined) continue;
       const member = z.union([z.boolean(), objectSchema]).parse(schema[key]);
       if (typeof member === 'boolean') continue;
@@ -265,6 +259,7 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
         { message: 'Value does not satisfy the conditional schema' },
       );
     }
+    result = applyUnevaluated({ schema, location, result });
     if (schema['default'] !== undefined) {
       if (!result.safeParse(schema['default']).success)
         throw new Error(`${location}: invalid schema default`);

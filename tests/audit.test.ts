@@ -265,7 +265,7 @@ describe('runAudit catalogue', () => {
     const keywords = compat
       .filter((finding) => finding.code === 'SPEC31_KEYWORD')
       .map((finding) => finding.message);
-    assert.ok(keywords.some((message) => message.includes('dependentRequired')));
+    assert.ok(keywords.some((message) => message.includes('$comment')));
     assert.ok(!keywords.some((message) => message.includes('propertyNames')));
     assert.equal(report.findings.filter((finding) => finding.severity === 'blocker').length, 0);
   });

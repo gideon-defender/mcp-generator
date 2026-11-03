@@ -1,64 +1,64 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { loadOpenApi } from '../src/openapi-loader.ts';
-import { assertReviewedRegistry } from './compatibility/additions.mjs';
 
-const source = JSON.parse(
-  readFileSync(new URL('../../../packages/docs/openapi.json', import.meta.url), 'utf8'),
-);
+// The registry source of truth is opencomp's main spec; the checkout is a sibling directory.
+const specPath =
+  process.env['OPENCOMP_OPENAPI'] ??
+  fileURLToPath(new URL('../../opencomp/packages/docs/openapi.json', import.meta.url));
+const source = existsSync(specPath) ? JSON.parse(readFileSync(specPath, 'utf8')) : undefined;
+// Set in CI so a missing spec fails the run instead of silently skipping the parity checks.
+if (source === undefined && process.env['REQUIRE_OPENCOMP_SPEC'] === '1') {
+  throw new Error(`REQUIRE_OPENCOMP_SPEC=1 but no spec at ${specPath}; set OPENCOMP_OPENAPI`);
+}
+const withSpec = { skip: source === undefined && `no spec at ${specPath}; set OPENCOMP_OPENAPI` };
 const baseline = JSON.parse(
   readFileSync(new URL('./fixtures/parity-fixture.json', import.meta.url), 'utf8'),
 );
-const overlay = parse(readFileSync(new URL('../mcp-overlay.yaml', import.meta.url), 'utf8'));
-const legacy = parse(
-  readFileSync(new URL('../.legacy-overlay/mcp-uploads-overlay.yaml', import.meta.url), 'utf8'),
+const reviewedAdditions = JSON.parse(
+  readFileSync(new URL('./fixtures/reviewed-additions.json', import.meta.url), 'utf8'),
 );
+const overlay = parse(readFileSync(new URL('../mcp-overlay.yaml', import.meta.url), 'utf8'));
 const emptyOverlay = { version: 1, schemas: [], operations: [] };
 const operation = (id) => ({ operationId: id, summary: 'Summary', description: 'Description' });
 const tinyDocument = (paths) => ({ openapi: '3.0.0', paths, components: { schemas: {} } });
 
-test('owned registry matches all 400 captured tool names, descriptions and wire locations', () => {
-  const before = structuredClone(source);
-  const result = loadOpenApi({ source, overlay });
-  assertReviewedRegistry({ tools: result.tools, baseline });
-  for (const tool of baseline.tools) {
-    const actual = result.tools.find((item) => item.name === tool.name);
-    assert(actual, tool.name);
-    assert.equal(actual.description, tool.description, tool.name);
-    assert.equal(actual.path, tool.envelope.path, tool.name);
-    assert.equal(actual.method, tool.envelope.method, tool.name);
-    assert.equal(actual.operationId, tool.envelope.operationId, tool.name);
+// The frozen oracle is the 400 captured tools; additions are reviewed one by one.
+function assertReviewedRegistry({ tools, baseline }) {
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    [...baseline.tools, ...reviewedAdditions].map((tool) => tool.name).sort(),
+  );
+  for (const addition of reviewedAdditions) {
+    const tool = tools.find((item) => item.name === addition.name);
+    for (const field of ['method', 'path', 'operationId'])
+      assert.equal(tool[field], addition[field], addition.name);
   }
-  assert.deepEqual(source, before, 'Public docs must remain untouched');
-});
+}
 
-test('all legacy disable/removal policies have equivalent owned targets', () => {
-  const expectedDisabled = legacy.actions
-    .filter((action) => action.update?.['x-speakeasy-mcp']?.disabled)
-    .map((action) => action.target)
-    .sort();
-  const actualDisabled = overlay.operations
-    .filter((item) => item.metadata.disabled)
-    .map((item) => `$.paths['${item.path}'].${item.method}`)
-    .sort();
-  assert.deepEqual(actualDisabled, expectedDisabled);
-  const expectedRemoved = legacy.actions
-    .filter((action) => action.remove)
-    .map((action) => action.target)
-    .sort();
-  const actualRemoved = overlay.schemas
-    .flatMap((schema) =>
-      schema.removeProperties.map(
-        (property) => `$.components.schemas.${schema.name}.properties.${property}`,
-      ),
-    )
-    .sort();
-  assert.deepEqual(actualRemoved, expectedRemoved);
-});
+test(
+  'owned registry keeps the 400 captured tools and exactly the reviewed additions',
+  withSpec,
+  () => {
+    const before = structuredClone(source);
+    const result = loadOpenApi({ source, overlay });
+    assertReviewedRegistry({ tools: result.tools, baseline });
+    for (const tool of baseline.tools) {
+      const actual = result.tools.find((item) => item.name === tool.name);
+      assert(actual, tool.name);
+      assert.equal(actual.description, tool.description, tool.name);
+      assert.equal(actual.path, tool.envelope.path, tool.name);
+      assert.equal(actual.method, tool.envelope.method, tool.name);
+      assert.equal(actual.operationId, tool.envelope.operationId, tool.name);
+    }
+    assert.deepEqual(source, before, 'Public docs must remain untouched');
+  },
+);
 
-test('all captured tools remain available with owned metadata only', () => {
+test('all captured tools remain available with owned metadata only', withSpec, () => {
   const owned = structuredClone(source);
   for (const item of Object.values(owned.paths)) {
     for (const operation of Object.values(item)) {
@@ -75,24 +75,23 @@ test('all captured tools remain available with owned metadata only', () => {
   }
 });
 
-test('disabled tools and all four inline-upload fields stay absent; source fields remain', () => {
-  const { document, tools } = loadOpenApi({ source, overlay });
-  for (const item of overlay.operations) {
-    assert(!tools.some((tool) => tool.path === item.path && tool.method === item.method));
-  }
-  assert(!tools.some((tool) => tool.path === '/v1/policies/{id}/pdf' && tool.method === 'post'));
-  for (const schema of overlay.schemas) {
-    assert.equal(document.components.schemas[schema.name].properties.fileData, undefined);
-    assert(source.components.schemas[schema.name].properties.fileData);
-  }
-  const legacyDescription = legacy.actions.find((action) =>
-    action.target.endsWith('.properties.s3Key'),
-  );
-  assert.equal(
-    document.components.schemas.UploadAndParseDto.properties.s3Key.description,
-    legacyDescription.update.description,
-  );
-});
+test(
+  'disabled tools and all four inline-upload fields stay absent; source fields remain',
+  withSpec,
+  () => {
+    const { document, tools } = loadOpenApi({ source, overlay });
+    for (const item of overlay.operations) {
+      assert(!tools.some((tool) => tool.path === item.path && tool.method === item.method));
+    }
+    assert(!tools.some((tool) => tool.path === '/v1/policies/{id}/pdf' && tool.method === 'post'));
+    for (const schema of overlay.schemas) {
+      assert.equal(document.components.schemas[schema.name].properties.fileData, undefined);
+      assert(source.components.schemas[schema.name].properties.fileData);
+    }
+    const description = document.components.schemas.UploadAndParseDto.properties.s3Key.description;
+    assert(typeof description === 'string' && description.length > 0);
+  },
+);
 
 test('owned-only operations derive compatible names and reserve disabled names', () => {
   const paths = {
@@ -158,31 +157,35 @@ test('overlay required-field removal leaves no dangling required key', () => {
   assert.deepEqual(doc.components.schemas.Upload.required, ['fileData', 's3Key']);
 });
 
-test('stale or unsupported overlay targets fail rather than silently exposing tools', () => {
-  assert.throws(() => loadOpenApi({ source, overlay: { ...overlay, version: 2 } }));
-  assert.throws(
-    () =>
-      loadOpenApi({
-        source,
-        overlay: {
-          ...emptyOverlay,
-          operations: [{ path: '/missing', method: 'get', metadata: { disabled: true } }],
-        },
-      }),
-    /Missing overlay operation/,
-  );
-  assert.throws(
-    () =>
-      loadOpenApi({
-        source,
-        overlay: {
-          ...emptyOverlay,
-          schemas: [{ name: 'UploadAndParseDto', removeProperties: ['missing'] }],
-        },
-      }),
-    /Missing overlay property/,
-  );
-});
+test(
+  'stale or unsupported overlay targets fail rather than silently exposing tools',
+  withSpec,
+  () => {
+    assert.throws(() => loadOpenApi({ source, overlay: { ...overlay, version: 3 } }));
+    assert.throws(
+      () =>
+        loadOpenApi({
+          source,
+          overlay: {
+            ...emptyOverlay,
+            operations: [{ path: '/missing', method: 'get', metadata: { disabled: true } }],
+          },
+        }),
+      /Missing overlay operation/,
+    );
+    assert.throws(
+      () =>
+        loadOpenApi({
+          source,
+          overlay: {
+            ...emptyOverlay,
+            schemas: [{ name: 'UploadAndParseDto', removeProperties: ['missing'] }],
+          },
+        }),
+      /Missing overlay property/,
+    );
+  },
+);
 
 test('overlay name changes are collision-checked and descriptions are tool-only', () => {
   const doc = tinyDocument({

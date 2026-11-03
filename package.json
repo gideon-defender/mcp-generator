@@ -22,7 +22,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts tests/*.test.mjs",
     "audit": "node --import tsx src/cli.ts audit",
     "audit:check-drift": "node --import tsx scripts/check-audit-drift.ts",
     "dev": "node --import tsx src/cli.ts"

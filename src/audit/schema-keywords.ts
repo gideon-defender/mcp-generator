@@ -45,10 +45,6 @@ export const SUPPORTED_KEYWORDS = new Set([
   'then',
   'else',
   'propertyNames',
-]);
-
-/** 2020-12 / OpenAPI 3.1 keywords the compiler rejects. */
-export const KEYWORDS_31 = new Set([
   'prefixItems',
   'contains',
   'minContains',
@@ -60,6 +56,10 @@ export const KEYWORDS_31 = new Set([
   'contentEncoding',
   'contentMediaType',
   'contentSchema',
+]);
+
+/** 2020-12 / OpenAPI 3.1 keywords the compiler rejects. */
+export const KEYWORDS_31 = new Set([
   '$schema',
   '$id',
   '$anchor',

@@ -685,37 +685,178 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
       );
     });
 
-    it('rejects schema with prefixItems keyword (Phase 4)', () => {
+    it('compiles prefixItems with items constraining the remainder', () => {
+      const closed = compileSource({
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'integer' }],
+        items: false,
+      });
+      assert(closed.safeParse([]).success);
+      assert(closed.safeParse(['a']).success);
+      assert(closed.safeParse(['a', 1]).success);
+      assert(!closed.safeParse(['a', 1, 2]).success);
+      assert(!closed.safeParse([1]).success);
+      const open = compileSource({
+        type: 'array',
+        prefixItems: [{ type: 'string' }],
+        items: { type: 'integer' },
+        minItems: 2,
+      });
+      assert(open.safeParse(['a', 1, 2]).success);
+      assert(!open.safeParse(['a', 'b']).success);
+      assert(!open.safeParse(['a']).success);
       assert.throws(
-        () =>
-          compileSource({
-            type: 'array',
-            prefixItems: [{ type: 'string' }, { type: 'number' }],
-          }),
-        /prefixItems is not yet supported/,
+        () => compileSource({ type: 'array', prefixItems: [] }),
+        /prefixItems must be a non-empty array/,
       );
     });
 
-    it('rejects schema with dependentRequired keyword (Phase 4)', () => {
+    it('compiles contains with minContains and maxContains', () => {
+      const contains = compileSource({
+        type: 'array',
+        contains: { type: 'string', const: 'x' },
+      });
+      assert(contains.safeParse([1, 'x']).success);
+      assert(!contains.safeParse([1]).success);
+      assert(!contains.safeParse([]).success);
+      const counted = compileSource({
+        type: 'array',
+        contains: { type: 'string' },
+        minContains: 2,
+        maxContains: 3,
+      });
+      assert(!counted.safeParse(['a', 1]).success);
+      assert(counted.safeParse(['a', 'b', 1]).success);
+      assert(!counted.safeParse(['a', 'b', 'c', 'd']).success);
+      const optional = compileSource({
+        type: 'array',
+        contains: { type: 'string' },
+        minContains: 0,
+      });
+      assert(optional.safeParse([1]).success);
+    });
+
+    it('compiles dependentRequired', () => {
+      const schema = compileSource({ type: 'object', dependentRequired: { a: ['b'] } });
+      assert(schema.safeParse({}).success);
+      assert(schema.safeParse({ b: 1 }).success);
+      assert(schema.safeParse({ a: 1, b: 2 }).success);
+      assert(!schema.safeParse({ a: 1 }).success);
       assert.throws(
-        () =>
-          compileSource({
-            type: 'object',
-            dependentRequired: { foo: ['bar'] },
-          }),
-        /dependentRequired is not yet supported/,
+        () => compileSource({ type: 'object', dependentRequired: { a: 'b' } }),
+        /dependentRequired must map/,
       );
     });
 
-    it('rejects schema with unevaluatedProperties keyword (Phase 4)', () => {
+    it('compiles dependentSchemas on the whole object', () => {
+      const schema = compileSource({
+        type: 'object',
+        dependentSchemas: { a: { required: ['b'] }, c: { minProperties: 3 } },
+      });
+      assert(schema.safeParse({}).success);
+      assert(schema.safeParse({ a: 1, b: 2 }).success);
+      assert(!schema.safeParse({ a: 1 }).success);
+      assert(!schema.safeParse({ c: 1, d: 2 }).success);
+      assert(schema.safeParse({ c: 1, d: 2, e: 3 }).success);
+    });
+
+    it('does not treat a default-only key as the trigger of a dependency', () => {
+      const schema = compileSource({
+        type: 'object',
+        properties: { a: { type: 'string', default: 'x' } },
+        dependentRequired: { a: ['b'] },
+      });
+      assert(schema.safeParse({}).success);
+      assert(!schema.safeParse({ a: 'y' }).success);
+    });
+
+    it('applies unevaluatedProperties after allOf, $ref, anyOf and if/then', () => {
+      const compile = createSchemaCompiler({
+        components: {
+          schemas: { Base: { type: 'object', properties: { id: { type: 'string' } } } },
+        },
+      });
+      const build = (source: JsonObject) => compile({ source, location: '/components/schemas/T' });
+      const allOf = build({
+        allOf: [{ $ref: '#/components/schemas/Base' }],
+        unevaluatedProperties: false,
+      });
+      assert(allOf.safeParse({ id: 'x' }).success);
+      assert(!allOf.safeParse({ id: 'x', extra: 1 }).success);
+      const direct = build({ $ref: '#/components/schemas/Base', unevaluatedProperties: false });
+      assert(direct.safeParse({ id: 'x' }).success);
+      assert(!direct.safeParse({ id: 'x', extra: 1 }).success);
+      const typed = build({
+        allOf: [{ type: 'object', properties: { a: { type: 'string' } } }],
+        unevaluatedProperties: { type: 'integer' },
+      });
+      assert(typed.safeParse({ a: 'x', b: 1 }).success);
+      assert(!typed.safeParse({ a: 'x', b: 'y' }).success);
+      const anyOf = build({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        anyOf: [
+          { properties: { b: { type: 'integer' } }, required: ['b'] },
+          { properties: { c: { type: 'integer' } }, required: ['c'] },
+        ],
+        unevaluatedProperties: false,
+      });
+      assert(anyOf.safeParse({ a: 'x', b: 1 }).success);
+      assert(anyOf.safeParse({ a: 'x', c: 1 }).success);
+      assert(!anyOf.safeParse({ a: 'x', b: 1, d: 1 }).success);
+      const conditional = build({
+        type: 'object',
+        properties: { kind: { type: 'string' } },
+        if: { properties: { kind: { const: 'a' } }, required: ['kind'] },
+        then: { properties: { extra: { type: 'string' } } },
+        unevaluatedProperties: false,
+      });
+      assert(conditional.safeParse({ kind: 'a', extra: 'x' }).success);
+      assert(!conditional.safeParse({ kind: 'b', extra: 'x' }).success);
+    });
+
+    it('applies unevaluatedItems after prefixItems, items and allOf', () => {
+      const prefixed = compileSource({
+        type: 'array',
+        prefixItems: [{ type: 'string' }],
+        unevaluatedItems: false,
+      });
+      assert(prefixed.safeParse(['a']).success);
+      assert(!prefixed.safeParse(['a', 'b']).success);
+      const composed = compileSource({
+        allOf: [{ type: 'array', items: { type: 'string' } }],
+        unevaluatedItems: false,
+      });
+      assert(composed.safeParse(['a', 'b']).success);
+      assert(!composed.safeParse(['a', 1]).success);
+    });
+
+    it('compiles contentEncoding, contentMediaType and contentSchema', () => {
+      const base64 = compileSource({ type: 'string', contentEncoding: 'base64' });
+      assert(base64.safeParse('aGVsbG8=').success);
+      assert(!base64.safeParse('!!').success);
+      const json = compileSource({
+        type: 'string',
+        contentMediaType: 'application/json',
+        contentSchema: { type: 'object', required: ['a'] },
+      });
+      assert(json.safeParse('{"a":1}').success);
+      assert(!json.safeParse('{}').success);
+      assert(!json.safeParse('nope').success);
+      const encoded = compileSource({
+        type: 'string',
+        contentEncoding: 'base64',
+        contentMediaType: 'application/json',
+      });
+      assert(encoded.safeParse(Buffer.from('{"a":1}').toString('base64')).success);
+      assert(!encoded.safeParse(Buffer.from('x').toString('base64')).success);
+      assert(
+        compileSource({ type: 'string', contentMediaType: 'image/png' }).safeParse('anything')
+          .success,
+      );
       assert.throws(
-        () =>
-          compileSource({
-            type: 'object',
-            properties: { foo: { type: 'string' } },
-            unevaluatedProperties: false,
-          }),
-        /unevaluatedProperties is not yet supported/,
+        () => compileSource({ type: 'string', contentEncoding: 'quoted-printable' }),
+        /unsupported contentEncoding/,
       );
     });
 

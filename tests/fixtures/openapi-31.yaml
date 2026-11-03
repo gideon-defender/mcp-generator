@@ -29,8 +29,7 @@ paths:
                     type: object
                     propertyNames:
                       pattern: "^[a-z]+$"
-                    dependentRequired:
-                      name: [score]
+                    $comment: legacy note
 components:
   securitySchemes:
     bearerAuth:
