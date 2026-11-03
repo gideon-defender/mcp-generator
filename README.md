@@ -11,7 +11,7 @@ any other product repo. Products consume the generator; they do not live in it.
 > Hackathon** (October 26 – November 4, 2026), using Meta's $150 in Muse
 > usage credits.
 
-## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) 🚀
+## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅
 
 Phase 0 answers, for any spec: _what operations exist, what would their MCP
 tools be called, and what exactly prevents or conditions faithful generation?_
@@ -22,14 +22,14 @@ Phase 3 is complete: native OpenAPI 3.1 / JSON Schema 2020-12 support with type 
 numeric exclusive bounds, const keyword, and additional constraints (uniqueItems,
 minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support) below.
 
-Phase 4 is in place for multi-type arrays, complex const values, `if`/`then`/`else`,
+Phase 4 is complete: multi-type arrays, complex const values, `if`/`then`/`else`,
 `discriminator` (tag routing for `oneOf`/`anyOf`, implicit `$ref` names and explicit
-`mapping`), `propertyNames` (every object key must match the schema), overlay v2
-allowlists, explicit classification, and policy metadata. These
-keywords still fail the build: `prefixItems`, `contains`, `minContains`,
-`maxContains`, `dependentRequired`, `dependentSchemas`,
-`unevaluatedProperties`, `unevaluatedItems`, `contentEncoding`, `contentMediaType`,
-`contentSchema`.
+`mapping`), `propertyNames`, `prefixItems`, `contains`/`minContains`/`maxContains`,
+`dependentRequired`/`dependentSchemas`, `unevaluatedProperties`/`unevaluatedItems`,
+`contentEncoding`/`contentMediaType`/`contentSchema` (base64 and JSON content are checked;
+other media types are annotations), overlay v2 allowlists, explicit classification, and
+policy metadata. Core vocabulary keywords such as `$id`, `$anchor`, `$dynamicRef` and
+`$defs` still fail the build.
 
 ```sh
 pnpm install
@@ -70,12 +70,12 @@ Outputs:
   read, everything else = mutate).
 - **Catalogues findings** with stable codes and severities:
 
-  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                     |
-  | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                               |
-  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler rejects, such as `prefixItems` or `contains`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`) are not flagged. |
-  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                        |
-  | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                                                                     |
+  | Severity   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+  | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                                                                                                   |
+  | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct flagged for 3.1-native handling (`type: [...]` nullable form, numeric `exclusiveMinimum/Maximum`, and 2020-12 keywords the compiler rejects, such as `$anchor` or `$dynamicRef`). Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`, `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`) are not flagged. |
+  | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                                                                                            |
+  | `info`     | Noted and ignored on purpose (deprecated operation, webhooks, undocumented spec paths).                                                                                                                                                                                                                                                                                                                                                                                         |
 
 - **Derives tool names generically** from any `operationId` style
   (camelCase, snake_case, kebab-case, `XxxController_op_v1`). Derivation is a
@@ -148,6 +148,27 @@ None of this is generic support — it's a curated allowlist (`disabled: true`)
 plus two hand-verified, per-operation `Accept` header shims. It's the same
 model this generator's Phase 4 overlay is meant to formalize.
 
+## Known gaps vs OpenComp's shipped server
+
+The tool registry matches (410 tools, same names, descriptions, input schemas and
+annotations over `tools/list`). The serving layer does not. OpenComp keeps its own
+vendored core plus a CLI and transport layer (`apps/mcp-server/src/cli*`); this
+generator's `start` and generated `server.mjs` cover less:
+
+| Area         | OpenComp                                                                                                                               | Generator                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Transports   | stdio, SSE (`--transport sse`) and Streamable HTTP (`serve`, `/mcp`), `/healthz`                                                       | stdio only                                                                                                           |
+| Flags        | `--port`, `--transport`, `--tool-annotations`, `--server-index`, `--log-level`, `--env`, `--disable-static-auth`, `--help`/`--version` | `--spec`, `--overlay`, `--name`, `--version`, `--server-url`, `--tool`, `--mode`, `--apikey`/`--bearer`, `--timeout` |
+| Credentials  | `--apikey`, then `OPENCOMP_APIKEY`; per-request `apikey` header over HTTP                                                              | `--apikey`/`--bearer`; generated server reads `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN`                 |
+| Lifecycle    | SIGTERM/SIGINT close the server; startup errors are sanitized so credential flags never reach stderr                                   | no signal handling                                                                                                   |
+| Hosted mode  | `--hosted`, `--public-url`, bearer validation against the product API, optional OIDC (`MCP_OIDC_*`)                                    | none; belongs to the Phase 5 auth adapter interface                                                                  |
+| Packaging    | single esbuild bundle (`dist-owned/`) plus MCP bundle manifest                                                                         | `server.mjs` and `package.json`; run `npm install` first (depends on `@gideon/mcp-generator`)                        |
+| Landing page | branded HTML at `/`                                                                                                                    | none (product-specific)                                                                                              |
+
+`createOwnedServer` already accepts `annotationFilter` and `serverIndex`; the missing
+pieces are CLI parsing, the HTTP transports (adds `express`) and the lifecycle
+handlers. Adopting this package in OpenComp is blocked on them.
+
 ## Development
 
 ```sh
@@ -163,14 +184,20 @@ named parameters for functions with 2+ arguments, early returns.
 
 ## Roadmap
 
-Phase 0 (audit gate) is complete. Phase 1 (compiler core) is in progress.
+Phases 0 (audit gate) and 1 (compiler core) are complete.
 Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is complete.
 
-1. **Phase 1 (in progress)** — product-neutral compiler/runtime core landed:
+1. **Phase 1 (complete)** — product-neutral compiler/runtime core:
    schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
-   and an MCP client/server built on `@modelcontextprotocol/sdk`. The
-   generated CLI/transports remain the serving entry points until parity
-   cutover to a byte-identical 412-tool registry for OpenComp.
+   and an MCP client/server built on `@modelcontextprotocol/sdk`. The `start` command
+   and generated `server.mjs` list the same 410 tools as OpenComp's shipped server
+   (name, description, input schema, annotations). OpenComp still ships its own
+   vendored copy of the core and its own HTTP/hosted transport layer; adopting this
+   package there is not done. Registry parity is gated against a frozen oracle of
+   400 captured tools
+   (the original 412 minus 12 identity-provider-owned writers removed from OpenComp)
+   plus 10 reviewed additions, 410 tools in total
+   (`tests/owned-contract.test.mjs`, which reads `../opencomp/packages/docs/openapi.json`).
 2. **Phase 2 (complete)** — config-driven build & CLI (`mcp.config.json`: spec, overlay,
    upstreams, branding, output) so any project builds a server by pointing at
    its spec.
@@ -183,11 +210,11 @@ Phase 2 (config-driven build) is complete. Phase 3 (OpenAPI 3.1 support) is comp
    - 🚧 `binary` format: rejected on strings; needs a policy (presigned `s3Key` upload vs. reject)
    - ✅ `null` type
    - 🚧 Deferred: full format validation
-4. **Phase 4 (in progress)** — multi-type arrays, complex const values, `if`/`then`/`else`,
-   `discriminator`, `propertyNames`, and overlay v2:
+4. **Phase 4 (complete)** — multi-type arrays, complex const values, `if`/`then`/`else`,
+   `discriminator`, `propertyNames`, `prefixItems`, `contains`, `dependent*`,
+   `unevaluated*`, `content*`, and overlay v2:
    allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
-   binding (used only when no `serverUrl` is configured). Remaining keywords: `prefixItems`,
-   `contains`, `dependent*`, `unevaluated*`, `content*`.
+   binding (used only when no `serverUrl` is configured).
 5. **Phases 5–7** — auth adapter SPI (API key, bearer/OAuth with exact MCP
    audience, agent authorization), hand-authored composite tools, and the
    Gideon Identity MCP product (independently deployed).

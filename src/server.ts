@@ -10,7 +10,7 @@ export type AnnotationFilter = Partial<
   Record<'readOnlyHint' | 'destructiveHint' | 'idempotentHint' | 'openWorldHint', boolean>
 >;
 
-/** Core wiring only: the generated CLI/transports remain the serving entry points until parity cutover. */
+/** Core wiring only: transports and the CLI live in `cli/start.ts` and the generated server. */
 export function createOwnedServer({
   name,
   version,

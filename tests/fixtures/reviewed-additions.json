@@ -1,0 +1,62 @@
+[
+  {
+    "name": "check-candidate-screening-readiness",
+    "method": "get",
+    "path": "/v1/people/candidate-screenings/readiness",
+    "operationId": "CandidateScreeningsController_readiness_v1"
+  },
+  {
+    "name": "check-checkr-connection-readiness",
+    "method": "get",
+    "path": "/v1/people/candidate-screenings/connection/readiness",
+    "operationId": "CandidateScreeningsController_connectionReadiness_v1"
+  },
+  {
+    "name": "list-candidate-screenings",
+    "method": "get",
+    "path": "/v1/people/candidate-screenings",
+    "operationId": "CandidateScreeningsController_list_v1"
+  },
+  {
+    "name": "get-candidate-screening",
+    "method": "get",
+    "path": "/v1/people/candidate-screenings/{id}",
+    "operationId": "CandidateScreeningsController_get_v1"
+  },
+  {
+    "name": "start-candidate-screening",
+    "method": "post",
+    "path": "/v1/people/candidate-screenings",
+    "operationId": "CandidateScreeningsController_start_v1"
+  },
+  {
+    "name": "configure-checkr-candidate-intake",
+    "method": "put",
+    "path": "/v1/people/candidate-screenings/connection",
+    "operationId": "CandidateScreeningsController_configure_v1"
+  },
+  {
+    "name": "create-role",
+    "method": "post",
+    "path": "/v1/roles",
+    "operationId": "RolesController_createRole_v1"
+  },
+  {
+    "name": "update-role",
+    "method": "patch",
+    "path": "/v1/roles/{roleId}",
+    "operationId": "RolesController_updateRole_v1"
+  },
+  {
+    "name": "delete-role",
+    "method": "delete",
+    "path": "/v1/roles/{roleId}",
+    "operationId": "RolesController_deleteRole_v1"
+  },
+  {
+    "name": "update-built-in-obligations",
+    "method": "patch",
+    "path": "/v1/roles/built-in/{name}/obligations",
+    "operationId": "RolesController_setBuiltInObligations_v1"
+  }
+]
