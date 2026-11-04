@@ -18,8 +18,8 @@ schemas:
   - name: CompleteChecklistItemDto
     removeProperties: [fileData]
 operations:
-  # The old generator implicitly omitted this SSE operation. Preserve that
-  # exclusion explicitly rather than adding an unusable 413th tool.
+  # The streaming SSE operation has no usable MCP tool shape; keep it
+  # disabled explicitly rather than adding an unusable 413th tool.
   - path: /v1/soa/auto-fill
     method: post
     metadata: { disabled: true }
@@ -47,3 +47,9 @@ operations:
   - path: /v1/trust-access/admin/requests/{id}/preview-nda
     method: get
     metadata: { disabled: true }
+  # The 200 response declares no media type, so the derived Accept would come
+  # from the error responses (PDF first). Ask for CSV, with PDF as a fallback.
+  - path: /v1/questionnaire/export
+    method: post
+    metadata:
+      accept: text/csv;q=1, application/pdf;q=0.7, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;q=0

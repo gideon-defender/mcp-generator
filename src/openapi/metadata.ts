@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 
 export const objectSchema = z.record(z.string(), z.unknown());
@@ -10,6 +11,8 @@ export const metadataSchema = z
     classification: z.enum(['read', 'mutate']).optional(),
     upstream: z.string().min(1).optional(),
     redaction: z.union([z.boolean(), z.array(z.string().min(1))]).optional(),
+    /** Overrides the Accept header derived from the declared response media types. */
+    accept: z.string().min(1).optional(),
   })
   .strict();
 export type McpMetadata = z.infer<typeof metadataSchema>;
@@ -25,28 +28,31 @@ export const METHODS = [
 ] as const;
 
 export function readMetadata(operation: JsonObject): McpMetadata {
-  const owned =
-    operation['x-comp-mcp'] === undefined ? {} : metadataSchema.parse(operation['x-comp-mcp']);
-  const legacy =
-    operation['x-speakeasy-mcp'] === undefined
-      ? {}
-      : metadataSchema.parse(operation['x-speakeasy-mcp']);
-  for (const key of [
-    'name',
-    'disabled',
-    'description',
-    'classification',
-    'upstream',
-    'redaction',
-  ] as const) {
-    if (owned[key] !== undefined && legacy[key] !== undefined && owned[key] !== legacy[key]) {
-      throw new Error(`Conflicting MCP ${key}: ${String(operation['operationId'])}`);
-    }
-  }
-  return { ...legacy, ...owned };
+  return operation['x-comp-mcp'] === undefined ? {} : metadataSchema.parse(operation['x-comp-mcp']);
 }
 
 export type OperationEntry = { path: string; method: string; operation: JsonObject };
+
+/**
+ * `x-speakeasy-mcp` is no longer read. A spec that still carries it loads only
+ * when `x-comp-mcp` holds the same values, so a `disabled`, `classification`
+ * or `redaction` setting is never silently dropped.
+ */
+export function assertNoUnmirroredLegacyMetadata(entries: OperationEntry[]): void {
+  for (const { operation } of entries) {
+    const legacy = operation['x-speakeasy-mcp'];
+    if (legacy === undefined) continue;
+    const owned = objectSchema.parse(operation['x-comp-mcp'] ?? {});
+    const unmirrored = Object.entries(objectSchema.parse(legacy))
+      .filter(([key, value]) => !isDeepStrictEqual(owned[key], value))
+      .map(([key]) => key);
+    if (unmirrored.length)
+      throw new Error(
+        `Unsupported x-speakeasy-mcp on ${String(operation['operationId'])}: ` +
+          `${unmirrored.join(', ')} not set to the same value in x-comp-mcp; move it to x-comp-mcp`,
+      );
+  }
+}
 
 export function operationEntries(paths: Record<string, JsonObject>): OperationEntry[] {
   return Object.entries(paths).flatMap(([path, item]) =>

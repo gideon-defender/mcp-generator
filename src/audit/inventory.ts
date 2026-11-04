@@ -24,9 +24,8 @@ function classifyOperation({
   method: string;
   operation: JsonObject;
 }): 'read' | 'mutate' {
-  for (const key of ['x-comp-mcp', 'x-speakeasy-mcp']) {
-    const metadata = operation[key];
-    if (typeof metadata !== 'object' || metadata === null) continue;
+  const metadata = operation['x-comp-mcp'];
+  if (typeof metadata === 'object' && metadata !== null) {
     const value = (metadata as JsonObject)['classification'];
     if (value === 'read' || value === 'mutate') return value;
   }

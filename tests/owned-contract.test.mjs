@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { loadOpenApi } from '../src/openapi-loader.ts';
+import { responseAccept } from '../src/request/accept.ts';
 
 // The registry source of truth is opencomp's main spec; the checkout is a sibling directory.
 const specPath =
@@ -58,29 +59,27 @@ test(
   },
 );
 
-test('all captured tools remain available with owned metadata only', withSpec, () => {
-  const owned = structuredClone(source);
-  for (const item of Object.values(owned.paths)) {
-    for (const operation of Object.values(item)) {
-      if (operation && typeof operation === 'object') delete operation['x-speakeasy-mcp'];
+test(
+  'all captured tools and descriptions are reproduced from owned metadata alone',
+  withSpec,
+  () => {
+    const { tools } = loadOpenApi({ source, overlay });
+    assertReviewedRegistry({ tools, baseline });
+    for (const captured of baseline.tools) {
+      assert.equal(
+        tools.find((tool) => tool.name === captured.name).description,
+        captured.description,
+      );
     }
-  }
-  const { tools } = loadOpenApi({ source: owned, overlay });
-  assertReviewedRegistry({ tools, baseline });
-  for (const captured of baseline.tools) {
-    assert.equal(
-      tools.find((tool) => tool.name === captured.name).description,
-      captured.description,
-    );
-  }
-});
+  },
+);
 
 test(
   'disabled tools and all four inline-upload fields stay absent; source fields remain',
   withSpec,
   () => {
     const { document, tools } = loadOpenApi({ source, overlay });
-    for (const item of overlay.operations) {
+    for (const item of overlay.operations.filter((entry) => entry.metadata.disabled)) {
       assert(!tools.some((tool) => tool.path === item.path && tool.method === item.method));
     }
     assert(!tools.some((tool) => tool.path === '/v1/policies/{id}/pdf' && tool.method === 'post'));
@@ -92,6 +91,44 @@ test(
     assert(typeof description === 'string' && description.length > 0);
   },
 );
+
+test(
+  'multi-media download and streaming tools keep their negotiated Accept header',
+  withSpec,
+  () => {
+    const { tools } = loadOpenApi({ source, overlay });
+    const accept = Object.fromEntries(
+      tools.map((tool) => [tool.name, responseAccept(tool.operation)]),
+    );
+    assert.equal(accept['ai-chat-policy'], 'application/json');
+    assert.equal(accept['download-mac-agent'], 'application/json');
+    assert.equal(accept['download-windows-agent'], 'application/json');
+    assert.equal(
+      accept['export-by-id'],
+      'text/csv;q=1, application/pdf;q=0.7, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;q=0',
+    );
+  },
+);
+
+test('an overlay accept replaces the Accept header derived from the spec', () => {
+  const paths = {
+    '/export': {
+      post: {
+        ...operation('AController_export_v1'),
+        responses: { 401: { content: { 'application/pdf': {}, 'text/csv': {} } } },
+      },
+    },
+  };
+  const withAccept = {
+    version: 1,
+    schemas: [],
+    operations: [{ path: '/export', method: 'post', metadata: { accept: 'text/csv;q=1' } }],
+  };
+  const [derived] = loadOpenApi({ source: tinyDocument(paths), overlay: emptyOverlay }).tools;
+  const [overridden] = loadOpenApi({ source: tinyDocument(paths), overlay: withAccept }).tools;
+  assert.equal(responseAccept(derived.operation), 'application/pdf');
+  assert.equal(responseAccept(overridden.operation), 'text/csv;q=1');
+});
 
 test('owned-only operations derive compatible names and reserve disabled names', () => {
   const paths = {
@@ -111,7 +148,30 @@ test('owned-only operations derive compatible names and reserve disabled names',
   );
 });
 
-test('name collisions and conflicting owned/legacy declarations fail compilation', () => {
+test('x-speakeasy-mcp loads only when x-comp-mcp mirrors it', () => {
+  const load = (metadata) =>
+    loadOpenApi({
+      source: tinyDocument({ '/a': { get: { ...operation('AController_get_v1'), ...metadata } } }),
+      overlay: emptyOverlay,
+    });
+  const mirrored = { name: 'a', disabled: true, redaction: ['ssn'] };
+  const { tools } = load({ 'x-comp-mcp': { ...mirrored }, 'x-speakeasy-mcp': { ...mirrored } });
+  assert.deepEqual(tools, []);
+  assert.throws(
+    () => load({ 'x-speakeasy-mcp': { disabled: true } }),
+    /Unsupported x-speakeasy-mcp on AController_get_v1: disabled/,
+  );
+  assert.throws(
+    () => load({ 'x-comp-mcp': { name: 'a' }, 'x-speakeasy-mcp': { name: 'b' } }),
+    /Unsupported x-speakeasy-mcp on AController_get_v1: name/,
+  );
+  assert.throws(
+    () => load({ 'x-comp-mcp': { redaction: ['a'] }, 'x-speakeasy-mcp': { redaction: ['b'] } }),
+    /redaction/,
+  );
+});
+
+test('name collisions fail compilation', () => {
   const same = { ...operation('AController_get_v1'), 'x-comp-mcp': { name: 'same' } };
   assert.throws(
     () =>
@@ -120,21 +180,6 @@ test('name collisions and conflicting owned/legacy declarations fail compilation
         overlay: emptyOverlay,
       }),
     /Duplicate MCP name/,
-  );
-  assert.throws(
-    () =>
-      loadOpenApi({
-        source: tinyDocument({
-          '/a': {
-            get: {
-              ...same,
-              'x-speakeasy-mcp': { name: 'different' },
-            },
-          },
-        }),
-        overlay: emptyOverlay,
-      }),
-    /Conflicting MCP name/,
   );
 });
 
