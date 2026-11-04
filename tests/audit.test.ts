@@ -205,25 +205,6 @@ describe('runAudit inventory', () => {
       );
     });
 
-    it('honors the legacy x-speakeasy-mcp classification', async () => {
-      assert.equal(
-        await classify(okOperation({ 'x-speakeasy-mcp': { classification: 'read' } })),
-        'read',
-      );
-    });
-
-    it('prefers x-comp-mcp over x-speakeasy-mcp, like the runtime', async () => {
-      assert.equal(
-        await classify(
-          okOperation({
-            'x-comp-mcp': { classification: 'mutate' },
-            'x-speakeasy-mcp': { classification: 'read' },
-          }),
-        ),
-        'mutate',
-      );
-    });
-
     it('ignores an invalid classification value instead of throwing', async () => {
       assert.equal(
         await classify(okOperation({ 'x-comp-mcp': { classification: 'bogus' } })),

@@ -135,7 +135,7 @@ tool registry or hand-patched:
 - **Multipart uploads** (`BODY_MIME_UNSUPPORTED`): the 4 operations with a
   multipart or multi-content-type body (3 via `mcp-overlay.yaml`'s
   `operations: [...disabled: true]` list, 1 — `uploadPolicyPdf` — flagged
-  `disabled: true` directly in the spec's own `x-comp-mcp`/`x-speakeasy-mcp`
+  `disabled: true` directly in the spec's own `x-comp-mcp`
   extension) never become tools. Their JSON-body sibling operations are kept,
   with the overlay rewriting those DTOs (`UploadAndParseDto`,
   `UploadAttachmentDto`, `UploadDocumentDto`, `CompleteChecklistItemDto`) to
@@ -143,21 +143,20 @@ tool registry or hand-patched:
   upload instead — the same pattern this audit recommends.
 - **SSE responses** (`RESPONSE_MIME_UNSUPPORTED`): 2 of 3 streaming
   operations (`auto-answer`, `soa/auto-fill`) are disabled the same way,
-  explicitly preserving behavior the old (Speakeasy) generator used to omit
-  implicitly. The third (`ai-chat-policy`) is kept active via a hardcoded
-  HTTP `Accept` header override (`application/json;q=1, text/event-stream;q=0`
-  in `src/schema/value.ts`) that asks the upstream to negotiate down to a
-  plain JSON response — called out in a comment as manually
-  "verified by exhaustive wire parity", not a general solution.
+  keeping the prior tool registry unchanged. The third (`ai-chat-policy`) is
+  kept active; the runtime prefers `application/json` when the response
+  declares it, asking the upstream to negotiate down to a plain JSON
+  response.
 - **Binary response formats** (`SCHEMA_FORMAT_UNSUPPORTED`): the two
-  binary-download operations get the same `Accept` header override. Separately,
+  binary-download operations rely on the same `application/json`-preferred
+  negotiation. `export-by-id` declares its media types only on error
+  responses, so the overlay sets its `accept` metadata to prefer CSV. Separately,
   the compiler never type-checks response schemas inlined under `paths` (only
   request parameters/bodies and named `components/schemas/*` entries), so an
   inline `format: binary` response schema is never reached by it regardless.
 
-None of this is generic support — it's a curated allowlist (`disabled: true`)
-plus two hand-verified, per-operation `Accept` header shims. It's the same
-model this generator's Phase 4 overlay is meant to formalize.
+None of this is generic support — it's a curated allowlist (`disabled: true`).
+It's the same model this generator's Phase 4 overlay formalizes.
 
 ## Known gaps vs OpenComp's shipped server
 

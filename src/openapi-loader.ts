@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  assertNoUnmirroredLegacyMetadata,
   assignToolNames,
   metadataSchema,
   objectSchema,
@@ -21,6 +22,7 @@ export function loadOpenApi({ source, overlay }: { source: unknown; overlay: unk
   const document = documentSchema.parse(structuredClone(source));
   const policy = overlaySchema.parse(overlay);
   const entries = operationEntries(document.paths);
+  assertNoUnmirroredLegacyMetadata(entries);
   assignToolNames(entries);
   applyOwnedOverlay({ document, entries, overlay: policy });
   // Validate explicit overlay name changes against all names, including disabled.

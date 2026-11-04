@@ -78,9 +78,8 @@ export function applyOwnedOverlay({
       ({ path, method }) => path === update.path && method === update.method,
     );
     if (!entry) throw new Error(`Missing overlay operation: ${key}`);
-    // Merge on top of the resolved owned+legacy metadata so a legacy-only
-    // name/description survives; the owned overlay still wins on conflicts.
+    // Merge on top of the spec's own x-comp-mcp metadata so a spec-level
+    // name/description survives; the overlay still wins on conflicts.
     entry.operation['x-comp-mcp'] = { ...readMetadata(entry.operation), ...update.metadata };
-    delete entry.operation['x-speakeasy-mcp'];
   }
 }

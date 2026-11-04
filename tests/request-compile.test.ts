@@ -280,12 +280,12 @@ describe('responseAccept', () => {
     assert.equal(responseAccept({ responses: { '200': {} } }), '*/*');
   });
 
-  it('uses the hardcoded override keyed by the tool name, ignoring the spec', () => {
+  it('uses the accept set in the operation MCP metadata over the declared media types', () => {
     const accept = responseAccept({
-      'x-comp-mcp': { name: 'ai-chat-policy' },
+      'x-comp-mcp': { accept: 'text/csv;q=1, application/pdf;q=0.7' },
       responses: { '200': { content: { 'application/json': {} } } },
     });
-    assert.equal(accept, 'application/json;q=1, text/event-stream;q=0');
+    assert.equal(accept, 'text/csv;q=1, application/pdf;q=0.7');
   });
 });
 

@@ -14,25 +14,20 @@ function op(extra: JsonObject = {}): JsonObject {
 }
 
 describe('readMetadata', () => {
-  it('prefers the owned extension over the legacy one when they agree or only one is set', () => {
-    assert.deepEqual(readMetadata({ 'x-speakeasy-mcp': { name: 'legacy' } }), { name: 'legacy' });
+  it('reads the x-comp-mcp extension, or an empty object when unset', () => {
+    assert.deepEqual(readMetadata({}), {});
     assert.deepEqual(readMetadata({ 'x-comp-mcp': { name: 'owned' } }), { name: 'owned' });
-    assert.deepEqual(
-      readMetadata({ 'x-comp-mcp': { disabled: true }, 'x-speakeasy-mcp': { name: 'legacy' } }),
-      { name: 'legacy', disabled: true },
-    );
   });
 
-  it('rejects a conflicting value between the owned and legacy extensions', () => {
-    assert.throws(
-      () =>
-        readMetadata({
-          operationId: 'op1',
-          'x-comp-mcp': { name: 'a' },
-          'x-speakeasy-mcp': { name: 'b' },
-        }),
-      /Conflicting MCP name: op1/,
-    );
+  it('ignores unknown extensions on the operation', () => {
+    assert.deepEqual(readMetadata({ 'x-unknown-mcp': { name: 'ignored' } }), {});
+  });
+
+  it('accepts a non-empty accept override and rejects an empty one', () => {
+    assert.deepEqual(readMetadata({ 'x-comp-mcp': { accept: 'text/csv' } }), {
+      accept: 'text/csv',
+    });
+    assert.throws(() => readMetadata({ 'x-comp-mcp': { accept: '' } }));
   });
 });
 
@@ -162,9 +157,9 @@ describe('applyOwnedOverlay', () => {
     );
   });
 
-  it('disables an operation and migrates it off the legacy extension', () => {
+  it('disables an operation on top of its spec-level owned metadata', () => {
     const entries = operationEntries({
-      '/a': { get: op({ 'x-speakeasy-mcp': { name: 'old' } }) },
+      '/a': { get: op({ 'x-comp-mcp': { name: 'listed' } }) },
     });
     const overlay = overlaySchema.parse({
       version: 1,
@@ -173,8 +168,7 @@ describe('applyOwnedOverlay', () => {
     });
     applyOwnedOverlay({ document: {}, entries, overlay });
     const operation = entries[0]!.operation;
-    assert.equal(operation['x-speakeasy-mcp'], undefined);
-    assert.deepEqual(operation['x-comp-mcp'], { name: 'old', disabled: true });
+    assert.deepEqual(operation['x-comp-mcp'], { name: 'listed', disabled: true });
   });
 
   it('rejects a duplicate overlay operation and a reference to a missing operation', () => {

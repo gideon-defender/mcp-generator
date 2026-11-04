@@ -108,5 +108,5 @@ export function registerDiscovery({
     },
     (args, context) => execute({ name: args.name, input: args.arguments ?? {}, context }),
   );
-  // The current scope inventory is empty; like the legacy runtime, do not expose list_scopes.
+  // The current scope inventory is empty; do not expose list_scopes.
 }
