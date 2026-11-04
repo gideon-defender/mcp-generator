@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, it } from 'node:test';
 import type { ApiOptions } from '../src/client.js';
 import { createOwnedServer, type AnnotationFilter } from '../src/server.js';
+import { text } from './helpers.js';
 
 const SOURCE = {
   openapi: '3.0.3',
@@ -58,13 +59,6 @@ async function connected({
       await server.close();
     },
   };
-}
-
-function text(result: Awaited<ReturnType<Client['callTool']>>): string {
-  const content = result.content as Array<{ type: string; text?: string }>;
-  const block = content[0];
-  assert.equal(block?.type, 'text');
-  return block.text ?? '';
 }
 
 describe('createOwnedServer: static mode', () => {

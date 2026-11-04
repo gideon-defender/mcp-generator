@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { MAX_COMPOSITE_MODULE_BYTES } from '../src/composite.js';
 
 const run = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -118,6 +119,93 @@ describe('CLI start command: argument validation', () => {
     ]);
     assert.equal(result.code, 2);
     assert.match(result.stderr, /--timeout must be a positive number/);
+  });
+});
+
+describe('CLI start command: --composites', () => {
+  const ZOD_URL = import.meta.resolve('zod');
+  const COMPOSITES_MODULE = `import { z } from ${JSON.stringify(ZOD_URL)};
+export const composites = [
+  {
+    name: 'hello',
+    description: 'Say hello.',
+    input: z.object({}),
+    async run() {
+      return { hello: 'world' };
+    },
+  },
+];
+`;
+
+  function startArgs({ spec, composites }: { spec: string; composites: string }): string[] {
+    return [
+      'start',
+      '--spec',
+      spec,
+      '--name',
+      'test-server',
+      '--version',
+      '0.0.1',
+      '--apikey',
+      'fake-key',
+      '--composites',
+      composites,
+    ];
+  }
+
+  it('rejects a module that is not a .js or .mjs file', async () => {
+    const spec = await writeSpec();
+    const result = await runCli(startArgs({ spec, composites: join(dirname(spec), 'x.ts') }));
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /--composites must reference a compiled \.js or \.mjs file/);
+  });
+
+  it('reports a module that cannot be loaded', async () => {
+    const spec = await writeSpec();
+    const dir = dirname(spec);
+    await mkdir(join(dir, 'directory.mjs'));
+    await writeFile(join(dir, 'broken.mjs'), 'export const composites = [');
+    await writeFile(join(dir, 'no-export.mjs'), 'export const other = [];\n');
+    await writeFile(join(dir, 'not-array.mjs'), 'export const composites = {};\n');
+    const oversized = await open(join(dir, 'oversized.mjs'), 'w');
+    await oversized.truncate(MAX_COMPOSITE_MODULE_BYTES + 1);
+    await oversized.close();
+    for (const [file, message] of [
+      ['missing.mjs', /Composite module does not exist/],
+      ['directory.mjs', /Composite module must be a regular file/],
+      ['oversized.mjs', /Composite module is \d+ bytes; the limit is \d+ bytes/],
+      ['broken.mjs', /Unable to import composite module/],
+      ['no-export.mjs', /must export a named "composites" array/],
+      ['not-array.mjs', /must export a named "composites" array/],
+    ] as const) {
+      const result = await runCli(startArgs({ spec, composites: join(dir, file) }));
+      assert.equal(result.code, 2, file);
+      assert.match(result.stderr, message, file);
+    }
+  });
+
+  it('serves a composite from the module over stdio', async () => {
+    const spec = await writeSpec();
+    const module = join(dirname(spec), 'composites.mjs');
+    await writeFile(module, COMPOSITES_MODULE);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', 'tsx', cli, ...startArgs({ spec, composites: module })],
+      cwd: repoRoot,
+      stderr: 'pipe',
+    });
+    const client = new Client({ name: 'cli-start-composites-test', version: '1' });
+    try {
+      await client.connect(transport, { timeout: 15_000 });
+      const { tools } = await client.listTools();
+      assert.deepEqual(tools.map((tool) => tool.name).sort(), ['hello', 'ping']);
+      const result = await client.callTool({ name: 'hello', arguments: {} });
+      const block = (result.content as Array<{ type: string; text?: string }>)[0];
+      assert.deepEqual(JSON.parse(block?.text ?? ''), { hello: 'world' });
+    } finally {
+      await client.close();
+      await transport.close();
+    }
   });
 });
 

@@ -274,7 +274,9 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
       validate({ source, location });
       return compile({ source, location });
     } catch (error) {
-      throw new Error(`${location}: ${error instanceof Error ? error.message : 'invalid schema'}`);
+      throw new Error(`${location}: ${error instanceof Error ? error.message : 'invalid schema'}`, {
+        cause: error,
+      });
     }
   };
 }

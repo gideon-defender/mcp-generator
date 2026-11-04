@@ -39,6 +39,13 @@ export const McpProjectConfigSchema = z
       })
       .strict()
       .optional(),
+    composites: z
+      .object({
+        /** Product-authored composite module (self-contained .js or .mjs), copied into output.dir. */
+        module: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((config, context) => {

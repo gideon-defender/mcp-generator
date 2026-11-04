@@ -21,6 +21,7 @@
     "prepack": "npm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test tests/*.test.ts tests/*.test.mjs",
     "audit": "node --import tsx src/cli.ts audit",
@@ -35,10 +36,13 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^24.2.0",
+    "eslint": "^10.14.0",
     "prettier": "^3.9.10",
     "tsx": "^4.19.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
   }
 }

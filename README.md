@@ -11,7 +11,7 @@ any other product repo. Products consume the generator; they do not live in it.
 > Hackathon** (October 26 – November 4, 2026), using Meta's $150 in Muse
 > usage credits.
 
-## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅ · Phase 5 (auth + hosted serving) ✅
+## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅ · Phase 5 (auth + hosted serving) ✅ · Phase 6 (read-only composite tools) ✅ (governed writes deferred)
 
 Phase 0 answers, for any spec: _what operations exist, what would their MCP
 tools be called, and what exactly prevents or conditions faithful generation?_
@@ -33,6 +33,12 @@ policy metadata. Core vocabulary keywords such as `$id`, `$anchor`, `$dynamicRef
 
 Phase 5 is complete: an auth adapter SPI, OAuth (JWT/JWKS) validation, and hosted
 Streamable HTTP / SSE serving. See [Phase 5](#phase-5-authentication-and-hosted-serving).
+
+Phase 6 is complete for read-only product composites: product-authored named tools
+can compose visible read-only operations through a strict `callTool` gateway. Build
+and `start` support a compiled composite module. Governed write composites remain
+deferred until the required step-up policy is approved. See
+[Phase 6](#phase-6-read-only-composite-tools).
 
 ```sh
 pnpm install
@@ -176,11 +182,118 @@ this package: those flags, logging and `--env` handling, the per-request `apikey
 header, product-API or OIDC token validation, protected-resource metadata, and
 stdio signal handling.
 
+## Connecting an MCP client
+
+Two different servers get confused here: a **hosted product deployment** (for
+example OpenComp's own dev endpoint) and a **server you build and run from this
+repo**. They take different configuration.
+
+### Credentials summary
+
+| Deployment             | Endpoint                                                             | Client credential                                               |
+| ---------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Built stdio artifact   | client spawns `node server.mjs`                                      | `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` in `env` |
+| Built / `start` hosted | `http://<host>:<port>/mcp` (Streamable HTTP) or `/sse` + `/messages` | OAuth bearer token only; **no** static key, no `apikey` header  |
+| OpenComp dev (hosted)  | `https://mcp.dev.gideondefender.com/mcp`                             | Organization API key in the `apikey` header, or OAuth (opt-in)  |
+
+`https://opencomp.dev.gideondefender.com` is the **web app**, not an MCP endpoint:
+every path (`/`, `/mcp`, `/sse`) answers `307` to `/auth`. Use the `mcp.` host.
+
+### Built stdio server
+
+The artifact reads static credentials from its environment, so pass them in the
+client's `env` block and never inline them in `args`:
+
+```json
+{
+  "mcpServers": {
+    "example": {
+      "command": "node",
+      "args": ["/absolute/path/to/dist/server.mjs"],
+      "env": { "MCP_GENERATOR_APIKEY": "<upstream-api-key>" }
+    }
+  }
+}
+```
+
+`--apikey` is sent upstream as `X-API-Key`; `--bearer` as `Authorization`. Supply
+exactly one of the two variables, or startup fails.
+
+### Hosted server built from this repo
+
+Build with `auth` + `hosted` (see [Phase 5](#phase-5-authentication-and-hosted-serving)),
+then point the client at the URL:
+
+```json
+{
+  "mcpServers": {
+    "example": {
+      "type": "remote",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}
+```
+
+Hosted mode resolves credentials per request and rejects static fallbacks, so
+`MCP_GENERATOR_APIKEY`/`MCP_GENERATOR_BEARER_TOKEN` are ignored there. A remote
+client must obtain a token from the configured issuer for the exact audience
+(`--oauth-audience`) and scopes (`--oauth-scope`). Without
+`--oauth-forward-token`, the token must also carry an `api_key` claim or callers
+receive `403`.
+
+### OpenComp dev deployment
+
+```json
+{
+  "mcp": {
+    "opencomp": {
+      "type": "remote",
+      "url": "https://mcp.dev.gideondefender.com/mcp",
+      "headers": { "apikey": "{env:OPENCOMP_APIKEY}" }
+    }
+  }
+}
+```
+
+Use the client's env-reference syntax rather than pasting the key, and prefer an
+organization-scoped **read-only** key: an org-wide key can reach mutating
+operations (deletes, policy edits, key revocation) through `execute_tool`. The
+server validates the key against the API's `/v1/auth/me` on every request, so
+revoked or expired keys fail on the next call.
+
+That deployment runs in dynamic mode, so clients see three tools —
+`list_tools`, `describe_tool_input`, `execute_tool` — not one per operation.
+Allow-list or filter on those names, not on operation names.
+
+Unauthenticated requests return `401` with
+`WWW-Authenticate: Bearer resource_metadata="https://mcp.dev.gideondefender.com/.well-known/oauth-protected-resource"`;
+`/healthz` is an unauthenticated readiness probe.
+
+### Verifying a connection
+
+```sh
+curl -sS https://mcp.dev.gideondefender.com/healthz
+
+curl -sS -X POST https://mcp.dev.gideondefender.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "apikey: $OPENCOMP_APIKEY" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}'
+```
+
+A healthy response is a `200` with `serverInfo`, for example
+`{"name":"OpenComp","version":"0.3.0"}`. A `401` means the key, its organization
+scopes, or its tenant binding is wrong; `503` means the auth service is down.
+Neither the hosted helper in this repo nor the OpenComp deployment accepts keys
+in the URL, and credential-bearing redirects are not followed.
+
 ## Development
 
 ```sh
 pnpm install
 pnpm test        # node:test, fixtures under tests/fixtures
+pnpm lint       # eslint (flat config, typescript-eslint)
 pnpm typecheck   # strict TypeScript, no `any`
 pnpm build       # emits dist/ (bin: dist/cli.js)
 ```
@@ -192,7 +305,8 @@ named parameters for functions with 2+ arguments, early returns.
 ## Roadmap
 
 Phases 0 (audit gate), 1 (compiler core), 2 (config-driven build), 3 (OpenAPI 3.1
-support), 4 (advanced 3.1) and 5 (auth and hosted serving) are complete.
+support), 4 (advanced 3.1), 5 (auth and hosted serving) and 6 (read-only composite
+tools) are complete. Governed write composites remain separately gated.
 
 1. **Phase 1 (complete)** — product-neutral compiler/runtime core:
    schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
@@ -225,9 +339,12 @@ support), 4 (advanced 3.1) and 5 (auth and hosted serving) are complete.
 5. **Phase 5 (complete)** — auth adapter SPI (static, reject, OAuth with exact MCP
    audience) and hosted Streamable HTTP / SSE serving. Agent authorization is not
    implemented.
-6. **Phases 6–7** — hand-authored composite tools and the
-   Gideon Identity MCP product (independently deployed).
-7. **Phase 8** — prove generalization with a second unrelated spec using only
+6. **Phase 6 (complete, read-only scope)** — product-owned composite tools declared
+   with Zod and compiled to MCP; `mcp.config.json` can copy a compiled module into
+   the artifact, or `start --composites` can import it at runtime. Governed write
+   composites are deferred.
+7. **Phase 7** — the Gideon Identity MCP product (independently deployed).
+8. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
 
 ## Phase 3: OpenAPI 3.1 Support
@@ -381,3 +498,59 @@ A config-driven build produces a hosted server when the config sets both `auth` 
 ```
 
 The public auth SPI exports `AuthAdapter`, static adapters, OAuth adapters, and hosted serving helpers from the package entrypoint. OAuth verification validates issuer, exact audience, signature, expiry, and required scopes. The upstream bearer option (`--oauth-forward-token`, `auth.upstreamBearerToken`) is off by default because it sends a token issued for the MCP server to the API; enable it only when the API accepts that audience. Without it, the token must carry an `api_key` claim, and callers without one receive 403.
+
+## Phase 6: Read-only Composite Tools
+
+Product-authored tools can compose MCP operations without forking the generator.
+They are compiled and registered like spec-derived tools, so `tools/list`, dynamic
+discovery, `allowedTools`, and `annotationFilter` apply normally.
+
+Create a compiled module with a named `composites` export (see [`examples/composites.mjs`](examples/composites.mjs)):
+
+```js
+import { z } from 'zod';
+import { jsonResult, parseToolJsonResult } from '@gideon/mcp-generator';
+
+export const composites = [
+  {
+    name: 'health-summary',
+    description: 'Return the service health in a product-friendly summary.',
+    title: 'Health summary',
+    input: z.object({}),
+    async run(_args, { callTool }) {
+      const result = await callTool('get-health', {});
+      if (result.isError) return result;
+      return jsonResult({ health: parseToolJsonResult(result) });
+    },
+  },
+];
+```
+
+For tools with parameters, pass the arguments at the operation MCP layer, for example `{ request: { userId: "ada" } }` for an operation whose parameters are nested under `request`.
+
+Declare the module in `mcp.config.json`:
+
+```json
+{
+  "identity": { "name": "example", "version": "0.1.0" },
+  "spec": { "path": "./openapi.yaml" },
+  "overlay": "./mcp-overlay.yaml",
+  "composites": { "module": "./composites.mjs" },
+  "output": { "dir": "dist" }
+}
+```
+
+`mcp-generator build` validates that `composites.module` is inside the working directory and is a regular `.js` or `.mjs` file, hashes and copies it to `output.dir/composites.mjs`, and makes the generated server import it at startup (the module is **not** executed at build time). The artifact includes `zod` as a dependency when composites are configured, and `artifact.json` / `contract-revision.json` record the copied module SHA-256.
+
+Use `mcp-generator start --composites ./composites.mjs ...` for the same behavior without a build. The module may use Node.js built-ins and package dependencies that the artifact installs (`@gideon/mcp-generator` and its dependencies).
+
+Safety rules enforced by the runtime:
+
+- Composite names must be lowercase kebab-case, at most 64 characters, and cannot collide with operation tools or dynamic discovery tools. Duplicates fail at startup.
+- Composite `classification` is fixed to `read` for now; a `mutate` definition fails fast with a clear error because governed writes are deferred.
+- Annotations advertise `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`. Governed write composites are intentionally unavailable in this release.
+- `callTool` may only invoke **visible** operation tools (after `allowedTools` and `annotationFilter`) classified as `read`. It cannot invoke another composite, and it cannot invoke hidden or mutating operations.
+- Input is validated before the composite runs. Underlying calls are validated the same way. Credentials are resolved once per top-level MCP request and are not shared with other callers; `callTool` passes the caller’s abort signal to outbound requests.
+- If a composite throws, callers receive `Composite tool <name> failed.` rather than internal details. Unhandled API and configuration errors use existing generic messages.
+- A composite may make at most 25 subcalls per MCP request. Calls beyond the limit fail with an error result, so one request cannot consume unbounded upstream quota.
+- At startup, invalid definitions fail the whole server/build; nothing is silently dropped.

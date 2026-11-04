@@ -1,15 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildFromConfig } from '../src/build/generate.js';
+import { GENERATOR_PACKAGE, installStubs } from './helpers.js';
 import type { McpProjectConfig } from '../src/config/schema.js';
 
 const minimalSpec = JSON.stringify({
@@ -29,8 +29,6 @@ const minimalSpec = JSON.stringify({
 
 const emptyOverlay = 'version: 1\nschemas: []\noperations: []\n';
 const OUTSIDE = /must be within the working directory/;
-const GENERATOR_PACKAGE = fileURLToPath(new URL('../package.json', import.meta.url));
-const SOURCE_INDEX = new URL('../src/index.ts', import.meta.url).href;
 
 const run = promisify(execFile);
 
@@ -39,25 +37,6 @@ async function project(): Promise<string> {
   await writeFile(join(dir, 'openapi.json'), minimalSpec);
   await writeFile(join(dir, 'mcp-overlay.yaml'), emptyOverlay);
   return dir;
-}
-
-// Stand in for `npm install`: resolve the generator from source and the SDK from this repo.
-async function installStubs(out: string): Promise<void> {
-  const generatorStub = join(out, 'node_modules', '@gideon', 'mcp-generator');
-  await mkdir(generatorStub, { recursive: true });
-  await writeFile(
-    join(generatorStub, 'package.json'),
-    JSON.stringify({ name: '@gideon/mcp-generator', type: 'module', exports: './index.js' }),
-  );
-  await writeFile(
-    join(generatorStub, 'index.js'),
-    `export * from ${JSON.stringify(SOURCE_INDEX)};\n`,
-  );
-  await mkdir(join(out, 'node_modules', '@modelcontextprotocol'), { recursive: true });
-  await symlink(
-    fileURLToPath(new URL('../node_modules/@modelcontextprotocol/sdk', import.meta.url)),
-    join(out, 'node_modules', '@modelcontextprotocol', 'sdk'),
-  );
 }
 
 async function builtArtifact(): Promise<string> {
@@ -70,7 +49,7 @@ async function builtArtifact(): Promise<string> {
   };
   await buildFromConfig(cfg, dir);
   const out = join(dir, 'out');
-  await installStubs(out);
+  await installStubs({ out });
   return out;
 }
 

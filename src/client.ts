@@ -2,6 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Buffer } from 'node:buffer';
 import { setTimeout as delay } from 'node:timers/promises';
 import { serializeRequest } from './request/serialize.js';
+import { textResult } from './results.js';
 import type { CompiledTool } from './tools.js';
 
 export type ApiOptions = {
@@ -16,7 +17,7 @@ export type ApiOptions = {
 };
 
 export function errorResult(message: string): CallToolResult {
-  return { isError: true, content: [{ type: 'text', text: message }] };
+  return { ...textResult(message), isError: true };
 }
 
 function retryDelay({ response, attempt }: { response?: Response; attempt: number }): number {
@@ -74,14 +75,14 @@ async function formatResponse({
   }
   if (redaction === true) {
     await response.body?.cancel();
-    return { content: [{ type: 'text', text: '[REDACTED]' }] };
+    return textResult('[REDACTED]');
   }
   const mimeType = response.headers.get('content-type') ?? '';
   const binary = mimeType.startsWith('image/') || mimeType.startsWith('audio/');
   // Field masks only work on JSON; any other body would leak unmasked, so fail closed.
   if (Array.isArray(redaction) && binary) {
     await response.body?.cancel();
-    return { content: [{ type: 'text', text: '[REDACTED]' }] };
+    return textResult('[REDACTED]');
   }
   if (binary) {
     const data = Buffer.from(await response.arrayBuffer()).toString('base64');
@@ -106,10 +107,10 @@ async function formatResponse({
       };
       text = JSON.stringify(mask(parsed));
     } catch {
-      return { content: [{ type: 'text', text: '[REDACTED]' }] };
+      return textResult('[REDACTED]');
     }
   }
-  return { content: [{ type: 'text', text }] };
+  return textResult(text);
 }
 
 /** Owns the whole deadline, including retries, backoff, and response consumption. */

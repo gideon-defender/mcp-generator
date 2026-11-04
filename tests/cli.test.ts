@@ -16,6 +16,7 @@ import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { Worker } from 'node:worker_threads';
 import {
   acquireOutputLock,
   assertOutputDirUsable,
@@ -419,6 +420,73 @@ describe('CLI', () => {
     assert.equal(await readFile(join(target, 'report.json'), 'utf8'), 'target json');
     assert.equal(await readFile(join(target, 'report.md'), 'utf8'), 'target markdown');
     assert.deepEqual((await readdir(target)).sort(), ['report.json', 'report.md']);
+  });
+
+  it('refuses a second pinned run while one is active and restores the working directory', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'mcp-gen-cli-pinreentry-'));
+    const first = join(work, 'first');
+    const second = join(work, 'second');
+    await mkdir(first);
+    await mkdir(second);
+    const cwdBefore = process.cwd();
+    await withPinnedOutputDir({
+      outDir: first,
+      run: async () => {
+        await assert.rejects(
+          withPinnedOutputDir({ outDir: second, run: async () => undefined }),
+          /already pinned/,
+        );
+      },
+    });
+    assert.equal(process.cwd(), cwdBefore);
+    // The failed attempt must not leave the guard set.
+    await withPinnedOutputDir({ outDir: second, run: async () => undefined });
+    assert.equal(process.cwd(), cwdBefore);
+  });
+
+  it('refuses to pin the output directory from a worker thread', async () => {
+    const work = await mkdtemp(join(tmpdir(), 'mcp-gen-cli-pinworker-'));
+    const out = join(work, 'out');
+    await mkdir(out);
+    const script = join(work, 'worker.mjs');
+    await writeFile(
+      script,
+      `import { parentPort, workerData } from 'node:worker_threads';
+const { register } = await import(workerData.tsxApiUrl);
+register();
+const { withPinnedOutputDir } = await import(workerData.moduleUrl);
+let ran = false;
+try {
+  await withPinnedOutputDir({
+    outDir: workerData.outDir,
+    run: async () => {
+      ran = true;
+    },
+  });
+  parentPort.postMessage({ ok: true, ran });
+} catch (error) {
+  parentPort.postMessage({ ok: false, ran, message: error.message });
+}
+`,
+    );
+    // Worker threads do not inherit tsx's hooks, so the worker registers them itself.
+    const worker = new Worker(script, {
+      workerData: {
+        tsxApiUrl: import.meta.resolve('tsx/esm/api'),
+        moduleUrl: new URL('../src/fs/output-dir.ts', import.meta.url).href,
+        outDir: out,
+      },
+    });
+    const message = await new Promise<{ ok: boolean; ran: boolean; message?: string }>(
+      (resolvePromise, reject) => {
+        worker.once('message', resolvePromise);
+        worker.once('error', reject);
+      },
+    );
+    await worker.terminate();
+    assert.equal(message.ok, false);
+    assert.equal(message.ran, false);
+    assert.match(message.message ?? '', /requires the main thread/);
   });
 
   it('replaces a symlinked report.json without touching the link target', async () => {

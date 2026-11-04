@@ -351,6 +351,47 @@ describe('Phase 5 hosted server', () => {
     });
   }
 
+  it('closes open SSE sessions once on shutdown without recursing', async () => {
+    const servers: ReturnType<typeof createOwnedServer>[] = [];
+    const hosted = await createHostedServer({
+      createServerForSession: () => {
+        const server = createOwnedServer({
+          name: 'test',
+          version: '1',
+          source: SOURCE,
+          overlay: OVERLAY,
+          transport: 'sse',
+          getOptions: () => ({ apiKey: 'key' }),
+        });
+        servers.push(server);
+        return server;
+      },
+      port: 0,
+      transport: 'sse',
+      host: '127.0.0.1',
+    });
+    await hosted.listen();
+    const address = hosted.server.address();
+    assert(address && typeof address !== 'string');
+    const client = new Client({ name: 'test-client', version: '1' });
+    await client.connect(new SSEClientTransport(new URL(`http://127.0.0.1:${address.port}/sse`)));
+    assert.equal(servers.length, 1);
+    assert.equal(servers[0]!.isConnected(), true);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        hosted.close(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('hosted.close() did not finish')), 5_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      await client.close().catch(() => undefined);
+    }
+    assert.equal(servers[0]!.isConnected(), false);
+  });
+
   it('rejects other methods on the stateless MCP endpoint', async () => {
     const jwks = await jwksServer();
     const adapter = oauthAuth({
