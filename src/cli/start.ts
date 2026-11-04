@@ -1,10 +1,13 @@
-import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 import { parse } from 'yaml';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ApiOptions } from '../client.js';
 import { createOwnedServer, type AnnotationFilter } from '../server.js';
 import { runHosted } from './serve.js';
 import type { AuthAdapter } from '../auth/types.js';
+import { MAX_COMPOSITE_MODULE_BYTES, type CompositeToolDefinition } from '../composite.js';
 
 const EMPTY_OVERLAY = { version: 1, schemas: [], operations: [] };
 
@@ -13,9 +16,42 @@ async function readDocument({ filePath }: { filePath: string }): Promise<unknown
   return parse(await readFile(filePath, 'utf8'));
 }
 
+async function loadCompositeModule({
+  filePath,
+}: {
+  filePath: string | undefined;
+}): Promise<CompositeToolDefinition[] | undefined> {
+  if (!filePath) return undefined;
+  const modulePath = resolve(filePath);
+  let info;
+  try {
+    info = await stat(modulePath);
+  } catch {
+    throw new Error(`Composite module does not exist: ${filePath}`);
+  }
+  if (!info.isFile()) throw new Error('Composite module must be a regular file');
+  if (info.size > MAX_COMPOSITE_MODULE_BYTES)
+    throw new Error(
+      `Composite module is ${info.size} bytes; the limit is ${MAX_COMPOSITE_MODULE_BYTES} bytes`,
+    );
+  const url = pathToFileURL(modulePath).href;
+  let module;
+  try {
+    module = (await import(url)) as { composites?: unknown };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Unable to import composite module ${filePath}: ${detail}`, { cause: err });
+  }
+  if (!Array.isArray(module.composites))
+    throw new Error('Composite module must export a named "composites" array');
+  return module.composites as CompositeToolDefinition[];
+}
+
 export type StartOptions = {
   specPath: string;
   overlayPath?: string;
+  /** Optional product composites module. Must export a named `composites` array. */
+  compositeModulePath?: string;
   name: string;
   version: string;
   mode?: 'static' | 'dynamic';
@@ -36,9 +72,10 @@ export type StartOptions = {
 
 /** Connects over stdio and runs until the client disconnects. */
 export async function runStart(options: StartOptions): Promise<void> {
-  const [source, overlay] = await Promise.all([
+  const [source, overlay, composites] = await Promise.all([
     readDocument({ filePath: options.specPath }),
     options.overlayPath ? readDocument({ filePath: options.overlayPath }) : EMPTY_OVERLAY,
+    loadCompositeModule({ filePath: options.compositeModulePath }),
   ]);
   const apiOptions: ApiOptions = {
     ...(options.apiKey ? { apiKey: options.apiKey } : { bearerToken: options.bearerToken! }),
@@ -65,6 +102,7 @@ export async function runStart(options: StartOptions): Promise<void> {
       transport,
       // Static stdio callers use one process credential; hosted callers must supply an auth adapter.
       ...(!authAdapter ? { getOptions: () => apiOptions } : {}),
+      ...(composites ? { composites } : {}),
     });
   if (options.hosted) {
     await runHosted({

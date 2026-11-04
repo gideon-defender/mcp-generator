@@ -19,7 +19,7 @@ export async function loadConfig(
     return McpProjectConfigSchema.parse(value);
   } catch (err) {
     if (err instanceof Error) {
-      throw new Error(`Invalid config at ${fullPath}: ${err.message}`);
+      throw new Error(`Invalid config at ${fullPath}: ${err.message}`, { cause: err });
     }
     throw err;
   }

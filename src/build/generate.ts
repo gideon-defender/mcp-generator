@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { extname, join, resolve } from 'node:path';
 import { readDocument } from '../fs/read-document.js';
 import { assertPathWithinCwd } from '../fs/safe-path.js';
+import { assertWritableFile, withPinnedOutputDir } from '../fs/output-dir.js';
 import { compileTools } from '../tools.js';
+import { MAX_COMPOSITE_MODULE_BYTES } from '../composite.js';
 import type { McpProjectConfig } from '../config/schema.js';
+
+function sha256Hex(data: string | Buffer): string {
+  return createHash('sha256').update(data).digest('hex');
+}
 
 async function readGeneratorPackage(): Promise<{
   name: string;
@@ -23,6 +29,12 @@ function exactDependencyVersion(versionRange: string): string {
   return versionRange.replace(/^[~^<>=v\s]+/, '').trim();
 }
 
+/**
+ * Writes the artifact into `output.dir`. While writing, the process working
+ * directory is switched to the output directory (see `withPinnedOutputDir`),
+ * so do not run other working-directory-relative work, another build, or an
+ * audit concurrently in the same process, and do not call it from a worker thread.
+ */
 export async function buildFromConfig(config: McpProjectConfig, cwd: string = process.cwd()) {
   const resolvedCwd = resolve(cwd);
   const specPath = resolve(resolvedCwd, config.spec.path);
@@ -51,11 +63,40 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   try {
     tools = compileTools({ source, overlay }).tools;
   } catch (err) {
-    throw new Error(`Failed to compile tools: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Failed to compile tools: ${err instanceof Error ? err.message : String(err)}`,
+      {
+        cause: err,
+      },
+    );
+  }
+
+  let compositesSha256: string | undefined;
+  let compositesModuleBytes: Buffer | undefined;
+  if (config.composites) {
+    const modulePath = resolve(resolvedCwd, config.composites.module);
+    assertPathWithinCwd(modulePath, resolvedCwd, 'composites.module');
+    let moduleStat;
+    try {
+      moduleStat = await lstat(modulePath);
+    } catch {
+      throw new Error(`composites.module does not exist: ${config.composites.module}`);
+    }
+    if (!moduleStat.isFile() || moduleStat.isSymbolicLink())
+      throw new Error('composites.module must be a real file');
+    if (moduleStat.size > MAX_COMPOSITE_MODULE_BYTES)
+      throw new Error(
+        `composites.module is ${moduleStat.size} bytes; the limit is ${MAX_COMPOSITE_MODULE_BYTES} bytes`,
+      );
+    const extension = extname(modulePath).toLowerCase();
+    if (extension !== '.mjs' && extension !== '.js')
+      throw new Error('composites.module must be a compiled .js or .mjs file');
+    compositesModuleBytes = await readFile(modulePath);
+    compositesSha256 = sha256Hex(compositesModuleBytes);
   }
   const toolNames = tools.map(({ name, description }) => ({ name, description }));
-  const specSha256 = createHash('sha256').update(specText).digest('hex');
-  const overlaySha256 = createHash('sha256').update(overlayText).digest('hex');
+  const specSha256 = sha256Hex(specText);
+  const overlaySha256 = sha256Hex(overlayText);
   const name = config.identity?.name ?? 'mcp-server';
   const version = config.identity?.version ?? '0.0.0';
   const auth = config.auth;
@@ -66,23 +107,31 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   if (!sdkVersionRange) {
     throw new Error('Generator package is missing @modelcontextprotocol/sdk dependency metadata');
   }
+  const zodVersionRange = compositesSha256 ? generatorPackage.dependencies['zod'] : undefined;
+  if (compositesSha256 && !zodVersionRange) {
+    throw new Error('Generator package is missing zod dependency metadata');
+  }
 
-  await mkdir(outputDir, { recursive: true });
-  await writeFile(resolve(outputDir, 'tool-names.json'), `${JSON.stringify(toolNames, null, 2)}\n`);
-  await writeFile(
-    resolve(outputDir, 'contract-revision.json'),
-    `${JSON.stringify(
-      {
-        name: config.identity?.name,
-        specSha256,
-        overlaySha256,
-        tools: tools.length,
-        version,
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  // Every artifact write happens inside withPinnedOutputDir below; a pathname
+  // check alone does not bind the writes (a local writer can rename the
+  // output directory and plant a symlink at its path, or drop a symlink at
+  // an artifact path; both are refused there).
+  const contractComposites = compositesSha256
+    ? { composites: { module: 'composites.mjs', sha256: compositesSha256 } }
+    : {};
+  const toolNamesText = `${JSON.stringify(toolNames, null, 2)}\n`;
+  const contractRevisionText = `${JSON.stringify(
+    {
+      name: config.identity?.name,
+      specSha256,
+      overlaySha256,
+      tools: tools.length,
+      version,
+      ...contractComposites,
+    },
+    null,
+    2,
+  )}\n`;
 
   const packageName =
     name
@@ -105,13 +154,23 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
               jose: exactDependencyVersion(generatorPackage.dependencies['jose'] ?? '^6.2.0'),
             }
           : {}),
+        // Product composites import zod directly; it is not otherwise part of the artifact.
+        ...(zodVersionRange ? { zod: exactDependencyVersion(zodVersionRange) } : {}),
       },
     },
     null,
     2,
   )}\n`;
-  await writeFile(resolve(outputDir, 'package.json'), generatedPackageText);
-
+  const compositesImport = compositesSha256
+    ? `import { composites } from './composites.mjs';\n`
+    : '';
+  const compositesCheck = compositesSha256
+    ? `if (!Array.isArray(composites)) {
+  throw new Error('Composite module must export a named "composites" array');
+}
+`
+    : '';
+  const compositesCreate = compositesSha256 ? '  composites,\n' : '';
   const authMode = auth?.mode;
   if (isHosted && authMode !== 'oauth')
     throw new Error('Hosted builds require auth.mode to be "oauth"');
@@ -123,12 +182,12 @@ export async function buildFromConfig(config: McpProjectConfig, cwd: string = pr
   upstreamBearerToken: ${JSON.stringify(auth?.upstreamBearerToken ?? false)},
 });`;
   const serverEntry = isHosted
-    ? `import { createOwnedServer, oauthAuth, createHostedServer } from '@gideon/mcp-generator';
+    ? `${compositesImport}import { createOwnedServer, oauthAuth, createHostedServer } from '@gideon/mcp-generator';
 
 const source = ${JSON.stringify(source, null, 2)};
 const overlay = ${JSON.stringify(overlay, null, 2)};
 
-${hostedAuthEntry}
+${compositesCheck}${hostedAuthEntry}
 const createServerForSession = () => createOwnedServer({
   name: ${JSON.stringify(name)},
   version: ${JSON.stringify(version)},
@@ -136,7 +195,7 @@ const createServerForSession = () => createOwnedServer({
   overlay,
   authAdapter,
   transport: ${JSON.stringify(hosted?.transport ?? 'http')},
-});
+${compositesCreate}});
 const hostedServer = await createHostedServer({
   createServerForSession,
   port: ${JSON.stringify(hosted?.port ?? 3000)},
@@ -153,12 +212,13 @@ const shutdown = async () => {
 process.once('SIGTERM', shutdown);
 process.once('SIGINT', shutdown);
 `
-    : `import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+    : `${compositesImport}import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createOwnedServer } from '@gideon/mcp-generator';
 
 const source = ${JSON.stringify(source, null, 2)};
 const overlay = ${JSON.stringify(overlay, null, 2)};
 
+${compositesCheck}
 const apiKey = process.env.MCP_GENERATOR_APIKEY?.trim();
 const bearerToken = process.env.MCP_GENERATOR_BEARER_TOKEN?.trim();
 if ((!apiKey && !bearerToken) || (apiKey && bearerToken)) {
@@ -171,31 +231,52 @@ const server = createOwnedServer({
   version: ${JSON.stringify(version)},
   source,
   overlay,
-  getOptions: () => apiOptions,
+${compositesCreate}  getOptions: () => apiOptions,
 });
 
 await server.connect(new StdioServerTransport());
 `;
-  await writeFile(resolve(outputDir, 'server.mjs'), serverEntry);
+  const artifactJsonText = `${JSON.stringify(
+    {
+      format: 1,
+      name,
+      version,
+      specSha256,
+      overlaySha256,
+      tools: tools.length,
+      entrypoint: 'server.mjs',
+      packageSha256: sha256Hex(generatedPackageText),
+      serverSha256: sha256Hex(serverEntry),
+      ...contractComposites,
+    },
+    null,
+    2,
+  )}\n`;
 
-  await writeFile(
-    resolve(outputDir, 'artifact.json'),
-    `${JSON.stringify(
-      {
-        format: 1,
-        name,
-        version,
-        specSha256,
-        overlaySha256,
-        tools: tools.length,
-        entrypoint: 'server.mjs',
-        packageSha256: createHash('sha256').update(generatedPackageText).digest('hex'),
-        serverSha256: createHash('sha256').update(serverEntry).digest('hex'),
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  await mkdir(outputDir, { recursive: true });
+  await withPinnedOutputDir({
+    outDir: outputDir,
+    run: async ({ outDir: pinnedDir }) => {
+      // The pinned directory is held by file handle, so a later swap of the
+      // output path cannot redirect these writes. Each destination is also
+      // checked: a symlink or directory planted at an artifact path is
+      // refused instead of followed.
+      const writeArtifact = async (name: string, contents: string | Buffer): Promise<void> => {
+        const destination = join(pinnedDir, name);
+        await assertWritableFile({ filePath: destination });
+        await writeFile(destination, contents);
+      };
+      // Keep the copy at the artifact root so the generated server can import
+      // it with a relative path. The copy is the exact buffer whose SHA-256
+      // is recorded in artifact.json and contract-revision.json.
+      if (compositesModuleBytes) await writeArtifact('composites.mjs', compositesModuleBytes);
+      await writeArtifact('tool-names.json', toolNamesText);
+      await writeArtifact('contract-revision.json', contractRevisionText);
+      await writeArtifact('package.json', generatedPackageText);
+      await writeArtifact('server.mjs', serverEntry);
+      await writeArtifact('artifact.json', artifactJsonText);
+    },
+  });
 
   return { tools, toolNames, outputDir };
 }

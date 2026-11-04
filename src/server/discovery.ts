@@ -2,7 +2,17 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { ExecutionContext } from '../server.js';
-import type { CompiledTool } from '../tools.js';
+import { textResult } from '../results.js';
+
+/** Minimal shape the discovery tools need; satisfied by both operation and composite registry entries. */
+export type DiscoverableTool = {
+  name: string;
+  description: string;
+  /** Must be present and JSON-serializable when `noInputParameters` is false. */
+  inputSchema?: unknown;
+  /** True when the tool accepts no input arguments. */
+  noInputParameters?: boolean;
+};
 
 export function registerDiscovery({
   server,
@@ -10,7 +20,7 @@ export function registerDiscovery({
   execute,
 }: {
   server: McpServer;
-  tools: CompiledTool[];
+  tools: DiscoverableTool[];
   execute: (input: {
     name: string;
     input: unknown;
@@ -65,8 +75,7 @@ export function registerDiscovery({
       annotations,
     },
     ({ tool_names }) => {
-      if (!tool_names.length)
-        return { content: [{ type: 'text', text: 'No tool names provided.' }] };
+      if (!tool_names.length) return textResult('No tool names provided.');
       const parts: string[] = [];
       const unknown: string[] = [];
       for (const name of tool_names) {
@@ -75,14 +84,13 @@ export function registerDiscovery({
           unknown.push(name);
           continue;
         }
-        const schema =
-          !tool.plan.body && !tool.plan.parameters.length
-            ? 'This tool takes no input parameters.'
-            : JSON.stringify(tool.inputSchema, null, 2);
+        const schema = tool.noInputParameters
+          ? 'This tool takes no input parameters.'
+          : JSON.stringify(tool.inputSchema, null, 2);
         parts.push(`<input_schema tool="${name}">\n\n${schema}\n\n</input_schema>`);
       }
       if (unknown.length) parts.push(`Unknown tools: ${unknown.join(', ')}`);
-      return { content: [{ type: 'text', text: parts.join('\n\n') }] };
+      return textResult(parts.join('\n\n'));
     },
   );
   server.registerTool(

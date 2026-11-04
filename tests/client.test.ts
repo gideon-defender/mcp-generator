@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { errorResult, executeRequest, type ApiOptions } from '../src/client.js';
+import { errorResult, executeRequest } from '../src/client.js';
 import { resolveApiCredential } from '../src/credentials.js';
 import { compileTools, type CompiledTool } from '../src/tools.js';
 

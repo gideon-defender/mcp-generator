@@ -19,11 +19,11 @@ export async function readDocument({
   try {
     text = await readFile(filePath, 'utf8');
   } catch (err) {
-    throw new Error(`Failed to read ${label} from ${shownPath}: ${describe(err)}`);
+    throw new Error(`Failed to read ${label} from ${shownPath}: ${describe(err)}`, { cause: err });
   }
   try {
     return { text, value: parseYaml(text) };
   } catch (err) {
-    throw new Error(`Failed to parse ${label} ${shownPath}: ${describe(err)}`);
+    throw new Error(`Failed to parse ${label} ${shownPath}: ${describe(err)}`, { cause: err });
   }
 }

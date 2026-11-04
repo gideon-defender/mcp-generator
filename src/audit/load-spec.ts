@@ -413,7 +413,7 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
   const extension = extname(filePath).toLowerCase();
   const format: 'json' | 'yaml' = extension === '.json' ? 'json' : 'yaml';
   let raw: unknown;
-  let parseIssues: string[] = [];
+  let parseIssues: string[];
   let flowCommaIssues: string[] = [];
   try {
     if (format === 'json') {
@@ -464,6 +464,7 @@ export async function loadSpec({ filePath }: { filePath: string }): Promise<Load
       `${filePath}: could not parse as ${format.toUpperCase()}: ${
         error instanceof Error ? (error.message.split('\n')[0] ?? '') : 'unknown parse error'
       }`,
+      { cause: error },
     );
   }
   const document = asObject({ value: raw, location: filePath });

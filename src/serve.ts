@@ -94,7 +94,12 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
       const transport = new SSEServerTransport('/messages', response);
       const sessionServer = options.createServerForSession();
       sessions.set(transport.sessionId, { transport, server: sessionServer });
+      // SSEServerTransport.close() calls onclose every time, and closing the server closes the
+      // transport again, so without this guard the two recurse forever.
+      let closed = false;
       transport.onclose = () => {
+        if (closed) return;
+        closed = true;
         sessions.delete(transport.sessionId);
         void sessionServer.close().catch(() => undefined);
       };
@@ -132,8 +137,14 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
         });
       }),
     close: async () => {
-      await Promise.all([...sessions.values()].map(({ transport }) => transport.close()));
+      const active = [...sessions.values()];
       sessions.clear();
+      await Promise.all(
+        active.map(async ({ transport, server }) => {
+          await transport.close();
+          await server.close().catch(() => undefined);
+        }),
+      );
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
       });

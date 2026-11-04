@@ -1,7 +1,68 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runAudit, type AuditReport } from '../src/index.js';
+
+export const GENERATOR_PACKAGE = fileURLToPath(new URL('../package.json', import.meta.url));
+export const SOURCE_INDEX = new URL('../src/index.ts', import.meta.url).href;
+
+/**
+ * Accepts anything shaped like a tool result: `CallToolResult` from this
+ * package, or a client `callTool` result (a union whose `content` is only
+ * `unknown` on some branches), so the parameter stays `unknown`.
+ */
+export function text(result: unknown): string {
+  const content = (result as { content?: unknown } | null | undefined)?.content;
+  const block = (Array.isArray(content) ? content : [])[0] as
+    { type: string; text?: string } | undefined;
+  assert.equal(block?.type, 'text');
+  return block?.text ?? '';
+}
+
+/**
+ * Stub the built artifact's dependencies in `<out>/node_modules`: a
+ * re-exporting `@gideon/mcp-generator` stub (source via tsx) plus symlinks
+ * to the repo's SDK and, optionally, zod. Kept in one place so the
+ * artifact smoke tests exercise the same stub shape.
+ */
+export async function installStubs({
+  out,
+  withZod = false,
+}: {
+  out: string;
+  withZod?: boolean;
+}): Promise<void> {
+  const generatorStub = join(out, 'node_modules', '@gideon', 'mcp-generator');
+  await mkdir(generatorStub, { recursive: true });
+  await writeFile(
+    join(generatorStub, 'package.json'),
+    JSON.stringify({ name: '@gideon/mcp-generator', type: 'module', exports: './index.js' }),
+  );
+  await writeFile(
+    join(generatorStub, 'index.js'),
+    `export * from ${JSON.stringify(SOURCE_INDEX)};\n`,
+  );
+  const packages = [
+    {
+      source: new URL('../node_modules/@modelcontextprotocol/sdk', import.meta.url),
+      target: join(out, 'node_modules', '@modelcontextprotocol', 'sdk'),
+    },
+    ...(withZod
+      ? [
+          {
+            source: new URL('../node_modules/zod', import.meta.url),
+            target: join(out, 'node_modules', 'zod'),
+          },
+        ]
+      : []),
+  ];
+  for (const { source, target } of packages) {
+    await mkdir(dirname(target), { recursive: true });
+    await symlink(fileURLToPath(source), target);
+  }
+}
 
 export type Spec = Record<string, unknown>;
 

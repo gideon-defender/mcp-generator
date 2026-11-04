@@ -23,14 +23,17 @@ function escapeCell(value: string): string {
 
 /** Neutralise spec-controlled text used outside tables (headings, lists, logs). */
 export function sanitizeInline(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/`/g, "'")
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]');
+  return (
+    value
+      .replace(/\\/g, '\\\\')
+      // eslint-disable-next-line no-control-regex -- intentionally strips terminal control characters
+      .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/`/g, "'")
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+  );
 }
 
 export function renderMarkdown({ report }: { report: AuditReport }): string {

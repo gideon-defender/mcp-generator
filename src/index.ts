@@ -20,6 +20,14 @@ export { objectSchema, type JsonObject, readMetadata, metadataSchema } from './o
 export { applyOwnedOverlay, overlaySchema } from './openapi/overlay.js';
 export { loadOpenApi } from './openapi-loader.js';
 export { compileTools, type CompiledTool } from './tools.js';
+export { textResult } from './results.js';
+export {
+  jsonResult,
+  parseToolJsonResult,
+  type CompositeCallTool,
+  type CompositeRunEnvironment,
+  type CompositeToolDefinition,
+} from './composite.js';
 export { createOwnedServer, type ExecutionContext, type AnnotationFilter } from './server.js';
 export { registerDiscovery } from './server/discovery.js';
 export { errorResult, executeRequest, type ApiOptions } from './client.js';

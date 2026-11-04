@@ -10,11 +10,10 @@ import {
   realpath,
   rename,
   rm,
-  stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +32,7 @@ Usage:
   mcp-generator build [config]
   mcp-generator audit --spec <openapi.json|yaml> [--docs <path>]... [--out <dir>] [--strict]
   mcp-generator start --spec <openapi.json|yaml> --name <name> --version <version>
-                      [--overlay <path>] [--server-url <url>] [--tool <name>]...
+                      [--overlay <path>] [--composites <module.js|mjs>] [--server-url <url>] [--tool <name>]...
                       [--mode static|dynamic] [--apikey <key> | --bearer <token>] [--timeout <ms>]
 
 build:
@@ -58,6 +57,8 @@ warnings that condition faithful MCP generation. It never modifies the spec.
 start:
   --spec <path>       OpenAPI 3.0.x document (JSON or YAML). Required.
   --overlay <path>    Owned overlay document (JSON or YAML). Default: no overlay.
+  --composites <path> Product-authored composite module (compiled .js or .mjs).
+                      The module must export a named "composites" array.
   --name <name>       MCP server name reported to clients. Required.
   --version <version> MCP server version reported to clients. Required.
   --mode <mode>       "static" (one tool per operation) or "dynamic"
@@ -86,73 +87,11 @@ stdio or hosted serving runs until the process is disconnected or stopped.
   --help            Show this help.
 `;
 
-async function lstatOrUndefined(
-  filePath: string,
-): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
-  try {
-    return await lstat(filePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-}
+import { lstatOrUndefined, assertOutputDirUsable, withPinnedOutputDir } from './fs/output-dir.js';
 
-export async function assertOutputDirUsable({ outDir }: { outDir: string }): Promise<void> {
-  const info = await lstatOrUndefined(outDir);
-  if (info?.isSymbolicLink()) throw new Error(`Output directory is a symlink: ${outDir}`);
-  if (info && !info.isDirectory()) throw new Error(`Output path is not a directory: ${outDir}`);
-  // Reject symlinked components between the working directory and the
-  // output directory (for example a planted audits/ symlink). Components
-  // outside the working directory are the caller's explicit choice.
-  const rel = relative(process.cwd(), outDir);
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`)) return;
-  let current = process.cwd();
-  for (const part of rel.split(sep)) {
-    current = resolve(current, part);
-    const partInfo = await lstatOrUndefined(current);
-    if (partInfo?.isSymbolicLink()) throw new Error(`Output path crosses a symlink: ${current}`);
-  }
-}
-
-/**
- * Run `run` with the checked output directory pinned, and restore the
- * working directory afterwards.
- *
- * A pathname check alone does not bind the later writes: a local writer
- * can rename the checked directory away and plant a symlink at its path
- * in the gap, and every write through the path lands in the link target.
- * The process working directory holds the directory itself, not its
- * path, so entering the checked directory pins the inode that relative
- * writes resolve against, and a later swap of the pathname cannot
- * redirect them. The identity check closes the smaller gap between the
- * check above and the move: if the directory at the path is no longer
- * the directory that was checked, the run stops instead of writing.
- * `run` receives '.' as its output directory and must not change the
- * working directory; the lock and install helpers build relative child
- * paths with `join`, so '.' stays relative and pinned.
- */
-export async function withPinnedOutputDir<T>({
-  outDir,
-  run,
-}: {
-  outDir: string;
-  run: ({ outDir }: { outDir: string }) => Promise<T>;
-}): Promise<T> {
-  await assertOutputDirUsable({ outDir });
-  const checked = await lstat(outDir);
-  if (!checked.isDirectory()) throw new Error(`Output path is not a directory: ${outDir}`);
-  const previousCwd = process.cwd();
-  process.chdir(outDir);
-  try {
-    const pinned = await stat('.');
-    if (pinned.dev !== checked.dev || pinned.ino !== checked.ino) {
-      throw new Error(`Output directory changed while it was being opened: ${outDir}`);
-    }
-    return await run({ outDir: '.' });
-  } finally {
-    process.chdir(previousCwd);
-  }
-}
+// Re-exported so existing consumers and tests can keep importing from the
+// CLI entrypoint; the implementation lives in ./fs/output-dir.js.
+export { assertOutputDirUsable, withPinnedOutputDir };
 
 async function assertReportFileUsable({ filePath }: { filePath: string }): Promise<void> {
   const info = await lstatOrUndefined(filePath);
@@ -219,7 +158,7 @@ async function tryReclaimStaleLock({ lockPath }: { lockPath: string }): Promise<
   } catch {
     return true;
   }
-  let movedStale = false;
+  let movedStale: boolean;
   try {
     const moved = await lstat(tombstone);
     movedStale =
@@ -278,6 +217,7 @@ export async function acquireOutputLock({
       throw new Error(
         `Another mcp-generator run is writing reports in: ${resolve(outDir)}. ` +
           `If no run is active, remove ${resolve(lockPath)}`,
+        { cause: error },
       );
     }
     try {
@@ -437,6 +377,7 @@ async function main(): Promise<void> {
       out: { type: 'string' },
       strict: { type: 'boolean', default: false },
       overlay: { type: 'string' },
+      composites: { type: 'string' },
       name: { type: 'string' },
       version: { type: 'string' },
       mode: { type: 'string' },
@@ -548,6 +489,7 @@ async function runStartCommand({
   values: {
     spec?: string;
     overlay?: string;
+    composites?: string;
     name?: string;
     version?: string;
     mode?: string;
@@ -569,6 +511,9 @@ async function runStartCommand({
   };
 }): Promise<void> {
   if (!values.spec || values.spec.trim() === '') throw new Error('Missing --spec <path>');
+  if (values.composites !== undefined && !/\.(mjs|js)$/i.test(values.composites)) {
+    throw new Error('--composites must reference a compiled .js or .mjs file');
+  }
   if (!values.name || values.name.trim() === '') throw new Error('Missing --name <name>');
   if (!values.version || values.version.trim() === '')
     throw new Error('Missing --version <version>');
@@ -630,6 +575,7 @@ async function runStartCommand({
     version: values.version,
     hosted,
     ...(values.overlay ? { overlayPath: resolve(values.overlay) } : {}),
+    ...(values.composites ? { compositeModulePath: resolve(values.composites) } : {}),
     ...(values.mode ? { mode: values.mode as 'static' | 'dynamic' } : {}),
     ...(values.tool ? { allowedTools: new Set(values.tool) } : {}),
     ...(values['server-url'] ? { serverUrl: values['server-url'] } : {}),
