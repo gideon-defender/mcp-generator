@@ -1,5 +1,5 @@
 {
-  "generatedBy": "phase0 harness (MCP SDK client, tools/list over stdio) + openapi.json mapping",
+  "generatedBy": "harness (MCP SDK client, tools/list over stdio) + openapi.json mapping",
   "gitHEAD": "476592a381a54ab9e439f1915ea0a1a19f18ad71",
   "spec": {
     "version": "1.0",

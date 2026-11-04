@@ -39,7 +39,7 @@ export function sanitizeInline(value: string): string {
 export function renderMarkdown({ report }: { report: AuditReport }): string {
   const { spec, summary } = report;
   const lines: string[] = [
-    '# MCP Generator Audit — Phase 0',
+    '# MCP Generator Audit',
     '',
     `- Spec: \`${sanitizeInline(spec.path)}\``,
     `- Title: ${sanitizeInline(spec.title)} (API version ${sanitizeInline(spec.version)})`,
@@ -101,7 +101,7 @@ export function renderMarkdown({ report }: { report: AuditReport }): string {
     '## Reading this report',
     '',
     '- **blocker** — cannot be represented faithfully as an MCP tool by the baseline generator; fix the spec or add a generic core capability.',
-    '- **compat31** — valid OpenAPI 3.1 / JSON Schema 2020-12 construct that a 3.0-only compiler rejects; requires native 3.1 support (Phase 3 of the generalization plan).',
+    '- **compat31** — valid OpenAPI 3.1 / JSON Schema 2020-12 construct that a 3.0-only compiler rejects; requires native 3.1 support.',
     '- **warning** — generatable, but needs a product policy decision (allowlist, redaction, upload pattern, auth adapter).',
     '- Derived tool names are a fallback. Curated products pin explicit names in their overlay; duplicates above are blockers until pinned.',
     '',

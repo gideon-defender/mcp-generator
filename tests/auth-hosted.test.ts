@@ -32,7 +32,7 @@ async function jwksServer(): Promise<{ server: Server; url: string; privateKey: 
   const pair = await generateKeyPair('RS256');
   const publicJwk = await exportJWK(pair.publicKey);
   publicJwk.use = 'sig';
-  publicJwk.kid = 'phase5-test-key';
+  publicJwk.kid = 'test-key';
   publicJwk.alg = 'RS256';
   const jwks = { keys: [publicJwk] };
   const server = createServer((request, response) => {
@@ -72,7 +72,7 @@ async function signToken({
   expiresIn?: string;
 }): Promise<string> {
   return new SignJWT({ ...claims, ...(scope ? { scope } : {}) })
-    .setProtectedHeader({ alg: 'RS256', kid: 'phase5-test-key' })
+    .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
     .setIssuer(issuer)
     .setAudience(audience)
     .setIssuedAt()
@@ -80,7 +80,7 @@ async function signToken({
     .sign(privateKey);
 }
 
-describe('Phase 5 auth adapters', () => {
+describe('Auth adapters', () => {
   it('returns exactly one static credential', async () => {
     assert.deepEqual(await staticAuth({ apiKey: 'key' }).authenticate({} as never), {
       ok: true,
@@ -224,7 +224,7 @@ describe('Phase 5 auth adapters', () => {
   });
 });
 
-describe('Phase 5 hosted server', () => {
+describe('Hosted server', () => {
   const ISSUER = 'https://issuer.example';
   const AUDIENCE = 'https://mcp.example';
 

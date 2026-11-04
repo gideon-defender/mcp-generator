@@ -147,7 +147,7 @@ function checkSchema({
       }
       const type = schema['type'];
       if (Array.isArray(type)) {
-        // Phase 3: type arrays are natively supported in 3.1. A 3.0 document
+        // Type arrays are natively supported in 3.1. A 3.0 document
         // still fails the audit; the guard stays for that dialect.
         push({
           code: 'SPEC31_TYPE_ARRAY',
@@ -187,14 +187,14 @@ function checkSchema({
         });
       } else if (typeof type === 'string' && type === 'null') {
         // 'null' as a type belongs to JSON Schema 2020-12; 3.0 expresses the
-        // same thing with nullable. Phase 3 natively supports this.
+        // same thing with nullable. It is natively supported.
         push(
           is31
             ? {
                 code: 'SPEC31_TYPE_NULL',
                 severity: 'info',
                 category: 'openapi-3.1',
-                message: 'Solo null type (JSON Schema 2020-12) — natively supported in Phase 3',
+                message: 'Solo null type (JSON Schema 2020-12) — natively supported',
                 location,
               }
             : {
@@ -209,14 +209,14 @@ function checkSchema({
       for (const key of ['exclusiveMinimum', 'exclusiveMaximum'] as const) {
         const bound = schema[key];
         if (typeof bound === 'number') {
-          // Phase 3: numeric exclusive bounds are natively supported in 3.1.
+          // Numeric exclusive bounds are natively supported in 3.1.
           // A 3.0 document still fails the audit; the guard stays for that dialect.
           push({
             code: 'SPEC31_EXCLUSIVE_BOUND',
             severity: is31 ? 'info' : 'blocker',
             category: 'openapi-3.1',
             message: is31
-              ? `${key} is numeric (3.1 form) — natively supported in Phase 3`
+              ? `${key} is numeric (3.1 form) — natively supported`
               : `${key} is numeric (3.1 form), not boolean`,
             location,
           });

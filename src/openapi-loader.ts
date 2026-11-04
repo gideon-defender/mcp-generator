@@ -8,6 +8,7 @@ import {
   readMetadata,
 } from './openapi/metadata.js';
 import { applyOwnedOverlay, overlaySchema } from './openapi/overlay.js';
+import { resolveParameterRefs } from './openapi/parameter-refs.js';
 
 const documentSchema = z
   .object({
@@ -20,6 +21,7 @@ const documentSchema = z
 // and HTTP execution (client.ts) are separate layers built on top of it in tools.ts.
 export function loadOpenApi({ source, overlay }: { source: unknown; overlay: unknown }) {
   const document = documentSchema.parse(structuredClone(source));
+  resolveParameterRefs(document);
   const policy = overlaySchema.parse(overlay);
   const entries = operationEntries(document.paths);
   assertNoUnmirroredLegacyMetadata(entries);

@@ -4,41 +4,39 @@ Standalone OpenAPI 3.0+ → MCP generator. Point it at any OpenAPI **3.0.x or
 3.1.x** document (JSON or YAML), plus optionally other docs, and it produces
 MCP servers whose tools faithfully represent that API.
 
-This repository is intentionally independent of OpenComp, Gideon Identity, or
-any other product repo. Products consume the generator; they do not live in it.
+This repository is intentionally independent of OpenComp or any other product repo.
+Products consume the generator; they do not live in it.
 
 > This project was developed as part of the **Meta Global AI Developer
 > Hackathon** (October 26 – November 4, 2026), using Meta's $150 in Muse
 > usage credits.
 
-## Status — Phase 2 (config-driven build) ✅ · Phase 3 (3.1 support) ✅ · Phase 4 (advanced 3.1) ✅ · Phase 5 (auth + hosted serving) ✅ · Phase 6 (read-only composite tools) ✅ (governed writes deferred)
+## Features
 
-Phase 0 answers, for any spec: _what operations exist, what would their MCP
-tools be called, and what exactly prevents or conditions faithful generation?_
-
-Phase 2 is complete: config-driven build via `mcp.config.json`.
-
-Phase 3 is complete: native OpenAPI 3.1 / JSON Schema 2020-12 support with type arrays,
-numeric exclusive bounds, const keyword, and additional constraints (uniqueItems,
-minProperties, maxProperties). See [Phase 3 details](#phase-3-openapi-31-support) below.
-
-Phase 4 is complete: multi-type arrays, complex const values, `if`/`then`/`else`,
-`discriminator` (tag routing for `oneOf`/`anyOf`, implicit `$ref` names and explicit
-`mapping`), `propertyNames`, `prefixItems`, `contains`/`minContains`/`maxContains`,
-`dependentRequired`/`dependentSchemas`, `unevaluatedProperties`/`unevaluatedItems`,
-`contentEncoding`/`contentMediaType`/`contentSchema` (base64 and JSON content are checked;
-other media types are annotations), overlay v2 allowlists, explicit classification, and
-policy metadata. Core vocabulary keywords such as `$id`, `$anchor`, `$dynamicRef` and
-`$defs` still fail the build.
-
-Phase 5 is complete: an auth adapter SPI, OAuth (JWT/JWKS) validation, and hosted
-Streamable HTTP / SSE serving. See [Phase 5](#phase-5-authentication-and-hosted-serving).
-
-Phase 6 is complete for read-only product composites: product-authored named tools
-can compose visible read-only operations through a strict `callTool` gateway. Build
-and `start` support a compiled composite module. Governed write composites remain
-deferred until the required step-up policy is approved. See
-[Phase 6](#phase-6-read-only-composite-tools).
+- **Spec audit.** For any OpenAPI 3.0 or 3.1 spec, reports which operations exist,
+  what their MCP tools would be called, and what prevents or conditions faithful
+  generation.
+- **Config-driven build.** Builds a runnable MCP server from `mcp.config.json`: spec,
+  overlay, identity and output.
+- **OpenAPI 3.1 / JSON Schema 2020-12.** Type arrays, numeric exclusive bounds, `const`
+  (including objects and arrays), `uniqueItems`, `minProperties`/`maxProperties`,
+  multi-type arrays, `if`/`then`/`else`, `propertyNames`, `prefixItems`,
+  `contains`/`minContains`/`maxContains`, `dependentRequired`/`dependentSchemas` and
+  `unevaluatedProperties`/`unevaluatedItems`. `discriminator` routes `oneOf`/`anyOf`
+  by tag, with implicit `$ref` names and explicit `mapping`.
+  `contentEncoding`/`contentMediaType`/`contentSchema` check base64 and JSON content;
+  other media types are annotations. Core vocabulary keywords such as `$id`, `$anchor`,
+  `$dynamicRef` and `$defs` still fail the build. See
+  [OpenAPI 3.1 Support](#openapi-31-support).
+- **Overlay policy.** Allowlists, explicit tool names, read/mutate classification and
+  policy metadata, without changing the spec. See [Overlays](#overlays).
+- **Authentication and hosted serving.** An auth adapter SPI, OAuth (JWT/JWKS)
+  validation, and hosted Streamable HTTP / SSE serving. See
+  [Authentication and Hosted Serving](#authentication-and-hosted-serving).
+- **Read-only composite tools.** Product-authored named tools that combine visible
+  read-only operations through a strict `callTool` gateway. `build` and `start` accept a
+  compiled composite module. Governed write composites are not available yet. See
+  [Read-only Composite Tools](#read-only-composite-tools).
 
 ```sh
 pnpm install
@@ -53,7 +51,7 @@ node dist/cli.js audit --spec /path/to/openapi.yaml --docs /path/to/docs-dir
 # CI mode: exit 1 when generation is blocked
 node dist/cli.js audit --spec /path/to/openapi.json --strict
 
-# Config-driven build (Phase 2)
+# Config-driven build
 node dist/cli.js build [./mcp.config.json]
 ```
 
@@ -67,7 +65,7 @@ Outputs:
   `npm install` and `npm start` in `output.dir` to serve over stdio with the
   `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` environment variable.
   With `auth` and `hosted` in the config, the artifact serves hosted HTTP/SSE with
-  OAuth instead (see Phase 5).
+  OAuth instead (see [Authentication and Hosted Serving](#authentication-and-hosted-serving)).
 
 ### What the audit does
 
@@ -86,12 +84,12 @@ Outputs:
   | `blocker`  | Cannot be represented faithfully as an MCP tool by the baseline generator (unsupported schema keyword/format/type, cookie/content parameters, non-JSON request body, SSE response, dangling/external `$ref`, duplicate derived tool name, missing `operationId`, undefined security scheme, spec parse issue). Fix the spec or add a generic core capability.                                                  |
   | `compat31` | Valid OpenAPI 3.1 / JSON Schema 2020-12 construct that still needs 3.1-native handling: 2020-12 keywords the compiler rejects, such as `$anchor` or `$dynamicRef`. Keywords the compiler already handles (`const`, `if`/`then`/`else`, `discriminator`, `uniqueItems`, `minProperties`/`maxProperties`, `propertyNames`, `prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`) are not flagged. |
   | `warning`  | Generatable, but needs a product policy decision (missing description, multiple request media types, binary response, no security defined, documented path not in spec, unquoted comma in a flow-mapping `description`/`summary`/`title`/`message`).                                                                                                                                                           |
-  | `info`     | Noted and ignored on purpose. In a 3.1 document: type arrays, solo null types, and numeric exclusive bounds (Phase 3 natively supports them; in a 3.0 document those same constructs are blockers). Also: deprecated operation, webhooks, undocumented spec paths.                                                                                                                                             |
+  | `info`     | Noted and ignored on purpose. In a 3.1 document: type arrays, solo null types, and numeric exclusive bounds (natively supported; in a 3.0 document those same constructs are blockers). Also: deprecated operation, webhooks, undocumented spec paths.                                                                                                                                                         |
 
 - **Derives tool names generically** from any `operationId` style
   (camelCase, snake_case, kebab-case, `XxxController_op_v1`). Derivation is a
   fallback and a collision detector (`NAME_DUPLICATE` blocker): curated
-  products pin explicit names in their overlay in later phases.
+  products pin explicit names in their overlay later.
 - **Cross-references docs** (`--docs`, repeatable; `.md`/`.mdx`/`.txt` files
   or directories): extracts API-looking route paths and reports
   documented-but-not-in-spec (drift or another service's routes) and
@@ -104,24 +102,15 @@ existing OpenComp owned compiler (`apps/mcp-server/src/schema/compiler.ts`,
 generator being generalized — so a `blocker` means "the current generator
 really would fail or misrepresent this", not a theoretical concern.
 
-### Verified against (Phase 0 acceptance)
+### Verified against
 
-| Spec                                                        | OpenAPI | Operations                  | Readiness                                                 |
-| ----------------------------------------------------------- | ------- | --------------------------- | --------------------------------------------------------- |
-| OpenComp `packages/docs/openapi.json`                       | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7)   |
-| Gideon Auth `../auth/openapi.yaml`                          | 3.1.0   | 691 (276 read / 415 mutate) | blocked — 11 blockers, 0 compat31, 7 warnings             |
-| Agent Communications `../agent-communications/openapi.yaml` | 3.1.0   | 169                         | blocked — 2 blockers, 0 compat31, 139 warnings            |
-| Message Delivery `../message-delivery/openapi.yaml`         | 3.1.0   | 23                          | ready with warnings — 0 blockers, 0 compat31, 21 warnings |
+| Spec                                  | OpenAPI | Operations                  | Readiness                                               |
+| ------------------------------------- | ------- | --------------------------- | ------------------------------------------------------- |
+| OpenComp `packages/docs/openapi.json` | 3.0.0   | 420 (171 read / 249 mutate) | blocked — 15 (multipart ×3, SSE ×5, `binary` format ×7) |
 
-The audit reports no current duplicate path keys or YAML flow-mapping comma
-issues in the Auth spec. It reports 122 documented paths that are not in the
-Auth spec, including Identity Cockpit's cross-service `/health/v1/*` and
-`/inv/v1/*` routes. The audit now treats declared `3xx` responses as success,
-so redirect-only OAuth/SAML flows (`samlSsoRedirect`, `samlSsoPost`,
-`oidcAuthorizeGet`, `oidcAuthorize`, and
-`completeAccessCertificationCollaborationInstallation`) do not produce
-`RESPONSE_NO_SUCCESS` warnings. Regenerate local reports with the commands in
-[`audits/README.md`](audits/README.md).
+The audit treats declared `3xx` responses as success, so redirect-only OAuth/SAML
+flows do not produce `RESPONSE_NO_SUCCESS` warnings. Regenerate local reports with
+the commands in [`audits/README.md`](audits/README.md).
 
 ### How OpenComp's own generator handles the operations this audit blocks
 
@@ -156,7 +145,7 @@ tool registry or hand-patched:
   inline `format: binary` response schema is never reached by it regardless.
 
 None of this is generic support — it's a curated allowlist (`disabled: true`).
-It's the same model this generator's Phase 4 overlay formalizes.
+It's the same model this generator's overlay formalizes.
 
 ## Known gaps vs OpenComp's shipped server
 
@@ -180,6 +169,26 @@ field, but `start` exposes neither as a flag. Still missing before OpenComp can 
 this package: those flags, logging and `--env` handling, the per-request `apikey`
 header, product-API or OIDC token validation, protected-resource metadata, and
 stdio signal handling.
+
+## Specification requirements and limits
+
+What `build` needs from a spec, beyond what the audit reports:
+
+- **Parameter references.** Local `#/components/parameters/*` references on path items
+  and operations are inlined before compilation (`src/openapi/parameter-refs.ts`). A
+  reference that is missing, not local, not under `#/components/parameters/`, or that
+  points at another reference fails with an error that names the operation.
+- **Descriptions.** Every operation needs a `summary` and a `description`. A missing
+  `description` fails the build with a raw Zod error, although the audit rates it only
+  as the warning `OP_MISSING_DESCRIPTION`.
+- **Request bodies.** The compiler accepts exactly one `application/json` request body
+  type. An operation with another or additional media type must be disabled in the
+  overlay with `metadata: { disabled: true }`. The audit reports multiple media types
+  only as the warning `BODY_MULTIPLE_MIME`.
+- **String formats.** Supported formats are `date-time`, `date`, `email`, `uuid`, `uri`,
+  `hostname`, `byte` and `password`. Other formats, such as `ipv4`, are rejected.
+- **The audit ignores the overlay.** It can report a spec as `blocked` for operations
+  that the overlay disables, so `build` is the real check.
 
 ## Connecting an MCP client
 
@@ -220,7 +229,7 @@ exactly one of the two variables, or startup fails.
 
 ### Hosted server built from this repo
 
-Build with `auth` + `hosted` (see [Phase 5](#phase-5-authentication-and-hosted-serving)),
+Build with `auth` + `hosted` (see [Authentication and Hosted Serving](#authentication-and-hosted-serving)),
 then point the client at the URL:
 
 ```json
@@ -303,11 +312,10 @@ named parameters for functions with 2+ arguments, early returns.
 
 ## Roadmap
 
-Phases 0 (audit gate), 1 (compiler core), 2 (config-driven build), 3 (OpenAPI 3.1
-support), 4 (advanced 3.1), 5 (auth and hosted serving) and 6 (read-only composite
-tools) are complete. Governed write composites remain separately gated.
+Everything below except items 7 and 8 is complete. Governed write composites remain
+separately gated.
 
-1. **Phase 1 (complete)** — product-neutral compiler/runtime core:
+1. **Compiler core (complete)** — product-neutral compiler/runtime core:
    schema compiler, request compiler/serializer, owned OpenAPI loader/overlay,
    and an MCP client/server built on `@modelcontextprotocol/sdk`. The `start` command
    and generated `server.mjs` list the same 410 tools as OpenComp's shipped server
@@ -318,35 +326,37 @@ tools) are complete. Governed write composites remain separately gated.
    (the original 412 minus 12 identity-provider-owned writers removed from OpenComp)
    plus 10 reviewed additions, 410 tools in total
    (`tests/owned-contract.test.mjs`, which reads `../opencomp/packages/docs/openapi.json`).
-2. **Phase 2 (complete)** — config-driven build & CLI (`mcp.config.json`: spec, overlay,
+2. **Config-driven build (complete)** — build & CLI (`mcp.config.json`: spec, overlay,
    upstreams, branding, output) so any project builds a server by pointing at
    its spec.
-3. **Phase 3 (complete)** — native OpenAPI 3.1 / JSON Schema 2020-12 support:
+3. **OpenAPI 3.1 support (complete)** — native OpenAPI 3.1 / JSON Schema 2020-12 support:
    - ✅ Type arrays (`type: [...]` nullable form)
    - ✅ Numeric exclusive bounds (`exclusiveMinimum`/`exclusiveMaximum` as numbers)
    - ✅ `const` keyword
    - ✅ `uniqueItems`, `minProperties`, `maxProperties` constraints
    - ✅ `byte` format (base64 string)
+   - ✅ `hostname` format (RFC 1123 hostname)
    - 🚧 `binary` format: rejected on strings; needs a policy (presigned `s3Key` upload vs. reject)
    - ✅ `null` type
    - 🚧 Deferred: full format validation
-4. **Phase 4 (complete)** — multi-type arrays, complex const values, `if`/`then`/`else`,
+4. **Advanced 3.1 keywords (complete)** — multi-type arrays, complex const values, `if`/`then`/`else`,
    `discriminator`, `propertyNames`, `prefixItems`, `contains`, `dependent*`,
    `unevaluated*`, `content*`, and overlay v2:
    allowlist, explicit names, read/mutate classification, redaction, per-operation upstream
    binding (used only when no `serverUrl` is configured).
-5. **Phase 5 (complete)** — auth adapter SPI (static, reject, OAuth with exact MCP
+5. **Auth and hosted serving (complete)** — auth adapter SPI (static, reject, OAuth with exact MCP
    audience) and hosted Streamable HTTP / SSE serving. Agent authorization is not
    implemented.
-6. **Phase 6 (complete, read-only scope)** — product-owned composite tools declared
+6. **Read-only composite tools (complete, read-only scope)** — product-owned composite tools declared
    with Zod and compiled to MCP; `mcp.config.json` can copy a compiled module into
    the artifact, or `start --composites` can import it at runtime. Governed write
    composites are deferred.
-7. **Phase 7** — the Gideon Identity MCP product (independently deployed).
+7. **Phase 7** — a first product built on the generator, deployed independently of
+   this repository.
 8. **Phase 8** — prove generalization with a second unrelated spec using only
    config + overlay + adapter.
 
-## Phase 3: OpenAPI 3.1 Support
+## OpenAPI 3.1 Support
 
 This release adds comprehensive OpenAPI 3.1 and JSON Schema 2020-12 compatibility.
 
@@ -415,7 +425,7 @@ discriminator:
 | `contentEncoding` / `contentMediaType` / `contentSchema` | ✅ Base64 and JSON content       |
 | `if` / `then` / `else`                                   | ✅ Conditional schemas           |
 
-**Audit Impact**: In a 3.1 document, type arrays, solo null types, and numeric exclusive bounds are now `info` (noted) instead of `compat31` (required for 3.1 support). Regenerating the reports under `audits/` shows 0 `compat31` everywhere — Gideon Auth's 677 construct findings (638 type arrays, 37 solo null types, 2 exclusive bounds) and Agent Communications' 55 are all `info`. In a 3.0 document these same constructs are blockers. 2020-12 keywords the compiler still rejects are unchanged and stay `compat31`. Auth's missing-description warnings went from 504 to 0 in the current report (7 warnings remain, all `BODY_MULTIPLE_MIME`).
+**Audit Impact**: In a 3.1 document, type arrays, solo null types, and numeric exclusive bounds are now `info` (noted) instead of `compat31` (required for 3.1 support). Regenerating the reports under `audits/` shows 0 `compat31` everywhere. In the specs audited so far, these constructs (type arrays, solo null types and exclusive bounds) are all `info`. In a 3.0 document these same constructs are blockers. 2020-12 keywords the compiler still rejects are unchanged and stay `compat31`.
 
 **Type Safety**: Const values are validated against their schema's type at compile time.
 Complex const values (objects, arrays) are compared structurally, independent of key order.
@@ -451,7 +461,7 @@ npm start
 
 Set `MCP_GENERATOR_APIKEY` or `MCP_GENERATOR_BEARER_TOKEN` before starting the
 generated stdio server to provide upstream API credentials. A hosted artifact reads
-no static credentials; callers authenticate per request (see Phase 5).
+no static credentials; callers authenticate per request (see [Authentication and Hosted Serving](#authentication-and-hosted-serving)).
 
 The artifact depends on `@gideon/mcp-generator`, which is not on the public npm
 registry. Set `output.generatorDependency` to any npm dependency spec that can
@@ -460,9 +470,182 @@ the generator checkout, which builds `dist/` first) or a git URL. Without it,
 `npm install` in the artifact fails, because the default is the generator's own
 version (`0.1.0`).
 
-## Phase 5: Authentication and Hosted Serving
+## Overlays
 
-Phase 5 adds a transport-independent authentication adapter and hosted HTTP/SSE serving.
+An overlay is a JSON or YAML policy file that the generator applies to a copy of the
+spec. It decides which operations become tools, what they are called and how they
+behave. The spec file is never changed.
+
+- Set it with `overlay` in `mcp.config.json`, or with `start --overlay <path>`. Without
+  `--overlay`, `start` uses an empty overlay.
+- `build` records the overlay's SHA-256 in `contract-revision.json` and `artifact.json`.
+- The audit does not read the overlay, so `build` is the real check.
+
+### Structure
+
+| Key          | Required | Purpose                                                   |
+| ------------ | -------- | --------------------------------------------------------- |
+| `version`    | yes      | `1` or `2`. Both are accepted and behave the same.        |
+| `schemas`    | yes      | Edits to named component schemas. Use `[]` for none.      |
+| `operations` | yes      | Per-operation metadata. Use `[]` for none.                |
+| `allowlist`  | no       | Tool names or `operationId`s. Everything else is dropped. |
+
+Unknown keys are rejected at every level.
+
+```yaml
+version: 2
+schemas:
+  - name: UploadDto
+    removeProperties: [fileData]
+    properties:
+      s3Key:
+        description: Key returned by the presigned upload step.
+operations:
+  - path: /v1/uploads
+    method: post
+    metadata: { disabled: true }
+  - path: /v1/users/{id}
+    method: get
+    metadata:
+      name: get-user
+      redaction: [ssn, dateOfBirth]
+  - path: /v1/search
+    method: post
+    metadata: { classification: read }
+  - path: /v1/reports/export
+    method: post
+    metadata:
+      accept: text/csv;q=1, application/pdf;q=0.7
+```
+
+### Operation metadata
+
+Each `operations` entry has a `path` (starting with `/`), a lowercase `method` and a
+`metadata` object. The same fields can be set in the spec under an operation's
+`x-comp-mcp` extension. The overlay is merged on top of it, and the overlay wins.
+
+| Field            | Type                      | Effect                                                                                                                                                |
+| ---------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`           | string                    | The tool name. See [Tool names](#tool-names).                                                                                                         |
+| `disabled`       | boolean                   | `true` removes the operation from the tools.                                                                                                          |
+| `description`    | string                    | Replaces the generated tool description, which is the operation's `summary`, a blank line and `description`.                                          |
+| `classification` | `read` or `mutate`        | Overrides the default classification. See [Classification](#classification).                                                                          |
+| `upstream`       | string                    | The API server for this operation. See [Upstream server](#upstream-server).                                                                           |
+| `redaction`      | `true` or list of strings | Hides response data. See [Redaction](#redaction).                                                                                                     |
+| `accept`         | string                    | The `Accept` header to send. By default it is `application/json` if a response declares it, otherwise the first declared media type, otherwise `*/*`. |
+
+Empty strings are rejected, and unknown fields are rejected. An operation without an
+`x-comp-mcp` extension is unaffected until the overlay names it.
+
+The old `x-speakeasy-mcp` extension is not read. A spec that still carries it loads only
+when `x-comp-mcp` holds the same values for every key. Otherwise `build` fails with
+`Unsupported x-speakeasy-mcp on <operationId>`, so a `disabled`, `classification` or
+`redaction` value is never dropped silently.
+
+### Tool names
+
+A name set in `x-comp-mcp` or in the overlay is used as given. Other operations get a
+derived name:
+
+1. Remove a trailing `_v<N>` from the `operationId`.
+2. Split at the first `_` into a resource and an action, and drop `Controller` from the
+   resource. An `operationId` without `_` is used whole.
+3. Use the action in kebab-case. `widgetsController_get_v1` becomes `get`.
+4. If that name is taken, use `resource-action`, such as `gadgets-get`. If that is also
+   taken, add `-2`, `-3` and so on.
+
+Explicit names are reserved first, including the names of disabled operations. Two
+explicit names that are equal fail with `Duplicate MCP name`, whether they come from the
+spec or from the overlay.
+
+Derived names are assigned before the overlay is applied. An operation that the overlay
+disables therefore still takes its derived name, and an operation after it in the spec
+may get the longer `resource-action` form. An overlay `name` replaces the derived name
+but does not free it for others. Pin names explicitly for any tool whose name clients
+depend on. An operation disabled in the spec's own `x-comp-mcp` never takes a name.
+
+### Classification
+
+By default `GET`, `HEAD` and `OPTIONS` are `read`, and every other method is `mutate`.
+Set `classification` to override this, for example for a `POST` search that changes
+nothing.
+
+The classification becomes the tool's MCP annotations:
+
+| Annotation        | Value                               |
+| ----------------- | ----------------------------------- |
+| `readOnlyHint`    | `true` for `read`                   |
+| `destructiveHint` | `true` for `mutate`                 |
+| `idempotentHint`  | `true` for `read`, and for `DELETE` |
+| `openWorldHint`   | always `true`                       |
+
+`annotationFilter` keeps only the tools whose annotations match, so a read-only server
+can hide every `mutate` tool. Composite tools can call only `read` tools.
+
+### Redaction
+
+Redaction runs on the response body before the tool returns it.
+
+- `redaction: true` returns `[REDACTED]` and never reads the body.
+- `redaction: [key, ...]` replaces the value of each listed key with `[REDACTED]` at any
+  depth in a JSON response. Key names are matched exactly, including case.
+- A body that is not valid JSON, or an image or audio response, returns `[REDACTED]`
+  instead of passing through unmasked.
+- An empty body is returned as is.
+
+Upstream error bodies are never returned. A failed request gives only
+`API request failed (HTTP <status>).`. Any copy of the caller's credential in a response
+is replaced with `[REDACTED]` for every tool.
+
+### Upstream server
+
+By default a tool calls the first entry of the spec's `servers`. `upstream` sends that
+operation to another server. The operator's choice wins over both: the `--server-url`
+flag, or `serverUrl` in `ApiOptions`, so a spec cannot redirect credentials. The URL must
+be `http` or `https` with no user name, password, query or fragment. `upstream` is used
+only when no operator URL is set.
+
+### Schema changes
+
+Each `schemas` entry names a component schema and can:
+
+- `removeProperties`: delete properties from it. They are also removed from `required`.
+  Use this to hide fields that a tool cannot send, such as a raw file body.
+- `properties`: replace the `description` of a property, with `{ description: '...' }`.
+  Nothing else about the property changes.
+
+A schema or property that does not exist fails the build with
+`Missing overlay property: <Schema>.<property>`.
+
+### Allowlist
+
+When `allowlist` is present, only operations whose tool `name` or `operationId` is listed
+become tools. It applies after `disabled`. An entry that matches nothing is ignored, so
+check the tool list after changing it.
+
+### Errors
+
+| Error                         | Cause                                                        |
+| ----------------------------- | ------------------------------------------------------------ |
+| `Duplicate overlay operation` | Two entries for the same method and path.                    |
+| `Missing overlay operation`   | An entry for a method and path that is not in the spec.      |
+| `Missing overlay property`    | A `schemas` entry names a schema or property that is absent. |
+| `Duplicate MCP name`          | Two operations end up with the same explicit name.           |
+| `Unsupported x-speakeasy-mcp` | A legacy extension holds a value that `x-comp-mcp` lacks.    |
+
+### How it is applied
+
+1. The spec is cloned, and local parameter references are inlined.
+2. The overlay is validated.
+3. Names are reserved and derived.
+4. `schemas` and `operations` are applied. Operation metadata is merged over `x-comp-mcp`.
+5. Names are checked again for duplicates.
+6. Disabled operations and operations outside the allowlist are dropped. The rest become
+   tools, and each needs a `summary` and a `description` in the spec.
+
+## Authentication and Hosted Serving
+
+This adds a transport-independent authentication adapter and hosted HTTP/SSE serving.
 
 ```sh
 # Local stdio deployment
@@ -498,7 +681,7 @@ A config-driven build produces a hosted server when the config sets both `auth` 
 
 The public auth SPI exports `AuthAdapter`, static adapters, OAuth adapters, and hosted serving helpers from the package entrypoint. OAuth verification validates issuer, exact audience, signature, expiry, and required scopes. The upstream bearer option (`--oauth-forward-token`, `auth.upstreamBearerToken`) is off by default because it sends a token issued for the MCP server to the API; enable it only when the API accepts that audience. Without it, the token must carry an `api_key` claim, and callers without one receive 403.
 
-## Phase 6: Read-only Composite Tools
+## Read-only Composite Tools
 
 Product-authored tools can compose MCP operations without forking the generator.
 They are compiled and registered like spec-derived tools, so `tools/list`, dynamic

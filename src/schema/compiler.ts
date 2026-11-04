@@ -36,7 +36,7 @@ const keywords = new Set([
   'deprecated',
   'readOnly',
   'writeOnly',
-  // Phase 3: OpenAPI 3.1 / JSON Schema 2020-12 support
+  // OpenAPI 3.1 / JSON Schema 2020-12 support
   'const',
   'uniqueItems',
   'minProperties',
@@ -88,10 +88,10 @@ export function createSchemaCompiler(document: JsonObject): CompileSchema {
     for (const key of ['nullable', 'readOnly', 'writeOnly', 'deprecated']) {
       if (schema[key] !== undefined) z.boolean().parse(schema[key]);
     }
-    // Phase 3: exclusiveMinimum/exclusiveMaximum can be boolean (3.0) or number (3.1)
+    // exclusiveMinimum/exclusiveMaximum can be boolean (3.0) or number (3.1)
     // so we don't validate their type here; the value compiler handles both forms
 
-    // Phase 4 advanced keywords are validated and compiled below where they have semantics.
+    // Advanced keywords are validated and compiled below where they have semantics.
 
     for (const key of Object.keys(schema)) {
       if (!keywords.has(key) && !key.startsWith('x-')) {

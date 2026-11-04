@@ -224,13 +224,24 @@ describe('runAudit inventory', () => {
 });
 
 describe('runAudit catalogue', () => {
+  it('does not flag the hostname format', async () => {
+    const { audit } = createAudit({ prefix: 'audit-hostname-' });
+    const parameters = [
+      { name: 'host', in: 'query', schema: { type: 'string', format: 'hostname' } },
+    ];
+    const report = await audit({
+      spec: baseSpec({ '/things': { get: okOperation({ parameters }) } }),
+    });
+    assert.ok(!codes(report).has('SCHEMA_FORMAT_UNSUPPORTED'));
+  });
+
   it('catalogues blockers from the baseline generator constraints', async () => {
     const report = await runAudit({ specPath: fixture('openapi-30.json') });
     const found = codes(report);
     assert.ok(found.has('PARAM_LOCATION_UNSUPPORTED'), 'cookie param');
     assert.ok(found.has('BODY_MIME_UNSUPPORTED'), 'multipart body');
     assert.ok(found.has('RESPONSE_MIME_UNSUPPORTED'), 'SSE response');
-    assert.ok(found.has('SCHEMA_FORMAT_UNSUPPORTED'), 'hostname format');
+    assert.ok(found.has('SCHEMA_FORMAT_UNSUPPORTED'), 'ipv4 format');
     assert.ok(found.has('SCHEMA_REF_DANGLING'), 'missing $ref target');
     assert.ok(found.has('NAME_DUPLICATE'), 'get-user collision');
     assert.equal(report.summary.readiness, 'blocked');
@@ -240,7 +251,7 @@ describe('runAudit catalogue', () => {
     const report = await runAudit({ specPath: fixture('openapi-31.yaml') });
     const compat = report.findings.filter((finding) => finding.severity === 'compat31');
     const compatCodes = new Set(compat.map((finding) => finding.code));
-    // Phase 3: type arrays and exclusive bounds are now natively supported in 3.1, marked as 'info'
+    // Type arrays and exclusive bounds are natively supported in 3.1, marked as 'info'
     assert.ok(compatCodes.has('SPEC31_KEYWORD'));
     const keywords = compat
       .filter((finding) => finding.code === 'SPEC31_KEYWORD')
