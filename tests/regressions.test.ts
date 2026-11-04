@@ -372,7 +372,7 @@ describe('review regressions', () => {
     assert.equal(boolReport.summary.readiness, 'blocked');
   });
 
-  it('catalogues boolean schemas and solo null types as compat31 in a 3.1 document', async () => {
+  it('catalogues boolean schemas as compat31 and solo null types as info in a 3.1 document', async () => {
     const spec: Spec = {
       openapi: '3.1.0',
       info: { title: 'T', version: '1' },
@@ -391,10 +391,12 @@ describe('review regressions', () => {
     const booleans = report.findings.filter((finding) => finding.code === 'SPEC31_BOOLEAN_SCHEMA');
     assert.equal(booleans.length, 1);
     assert.equal(booleans[0]?.severity, 'compat31');
+    // Phase 3: type null is now natively supported, marked as 'info'
     const nulls = report.findings.filter((finding) => finding.code === 'SPEC31_TYPE_NULL');
     assert.equal(nulls.length, 1);
-    assert.equal(nulls[0]?.severity, 'compat31');
+    assert.equal(nulls[0]?.severity, 'info');
     assert.equal(report.findings.filter((finding) => finding.severity === 'blocker').length, 0);
+    // Readiness is 'needs-31-support' due to boolean schema being compat31
     assert.equal(report.summary.readiness, 'needs-31-support');
   });
 
