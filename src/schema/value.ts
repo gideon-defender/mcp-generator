@@ -46,7 +46,7 @@ export function compileValue({
   location: string;
   compile: CompileSchema;
 }): z.ZodType {
-  // Phase 3: Handle type arrays (3.1 nullable form)
+  // Handle type arrays (3.1 nullable form)
   // type: ["string", "null"] is equivalent to type: "string" + nullable: true
   let type: string | undefined;
   let isNullable = false;
@@ -308,6 +308,7 @@ export function compileValue({
     else if (format === 'email') string = string.check(z.email());
     else if (format === 'uuid') string = string.check(z.uuid());
     else if (format === 'uri') string = string.check(z.url());
+    else if (format === 'hostname') string = string.check(z.hostname());
     else if (format === 'byte') string = string.check(z.base64());
     else if (format !== undefined && format !== 'password')
       throw new Error(`${location}: unsupported format ${String(format)}`);
@@ -350,7 +351,7 @@ export function compileValue({
     const minimum = schema['minimum'];
     const maximum = schema['maximum'];
 
-    // Phase 3: Handle numeric exclusive bounds (3.1: exclusiveMinimum/exclusiveMaximum as numbers)
+    // Handle numeric exclusive bounds (3.1: exclusiveMinimum/exclusiveMaximum as numbers)
     // vs 3.0 boolean form paired with minimum/maximum
     const exclusiveMinimum = schema['exclusiveMinimum'];
     const exclusiveMaximum = schema['exclusiveMaximum'];

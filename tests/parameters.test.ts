@@ -32,7 +32,7 @@ describe('parameter collection', () => {
     const spec = baseSpec({
       '/v1/users/{id}': {
         parameters: [
-          { name: 'verbose', in: 'query', schema: { type: 'string', format: 'hostname' } },
+          { name: 'verbose', in: 'query', schema: { type: 'string', format: 'ipv4' } },
           { name: 'id', in: 'path', required: true, schema: { type: 'bogus' } },
         ],
         get: okOperation(),

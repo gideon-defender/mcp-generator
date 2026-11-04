@@ -76,6 +76,7 @@ export const STRING_FORMATS = new Set([
   'email',
   'uuid',
   'uri',
+  'hostname',
   'password',
   'byte',
 ]);

@@ -8,6 +8,7 @@ import {
 } from '../src/openapi/metadata.js';
 import { applyOwnedOverlay, overlaySchema } from '../src/openapi/overlay.js';
 import { loadOpenApi } from '../src/openapi-loader.js';
+import { compileTools } from '../src/tools.js';
 
 function op(extra: JsonObject = {}): JsonObject {
   return { operationId: 'resourceAction_v1', summary: 's', description: 'd', ...extra };
@@ -239,5 +240,87 @@ describe('loadOpenApi', () => {
       },
     });
     assert.deepEqual(tools, []);
+  });
+});
+
+describe('parameter references', () => {
+  const parameters = {
+    Id: { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+    Limit: { name: 'limit', in: 'query', schema: { type: 'integer' } },
+  };
+  function load(paths: JsonObject, defined: JsonObject = parameters) {
+    return compileTools({
+      source: { openapi: '3.0.3', paths, components: { parameters: defined } },
+      overlay: { version: 1, schemas: [], operations: [] },
+    });
+  }
+  const ref = (name: string) => ({ $ref: `#/components/parameters/${name}` });
+
+  it('compiles path-level and operation-level references as plain parameters', () => {
+    const { tools } = load({
+      '/widgets/{id}': {
+        parameters: [ref('Id')],
+        get: op({ operationId: 'widgetsController_get_v1', parameters: [ref('Limit')] }),
+      },
+    });
+    assert.deepEqual(
+      tools[0]?.plan.parameters.map(({ name, in: where }) => `${where}:${name}`),
+      ['path:id', 'query:limit'],
+    );
+  });
+
+  it('lets an operation parameter override a path-level reference with the same name', () => {
+    const { tools } = load({
+      '/widgets/{id}': {
+        parameters: [ref('Id')],
+        get: op({
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+        }),
+      },
+    });
+    assert.equal(tools[0]?.plan.parameters[0]?.schema?.['type'], 'integer');
+  });
+
+  it('gives each use its own copy and leaves the source document unchanged', () => {
+    const source = {
+      openapi: '3.0.3',
+      paths: {
+        '/a': { get: op({ operationId: 'a_get_v1', parameters: [ref('Limit')] }) },
+        '/b': { get: op({ operationId: 'b_get_v1', parameters: [ref('Limit')] }) },
+      },
+      components: { parameters },
+    };
+    const before = structuredClone(source);
+    const { tools } = loadOpenApi({
+      source,
+      overlay: { version: 1, schemas: [], operations: [] },
+    });
+    assert.deepEqual(source, before);
+    const [first, second] = tools.map(({ operation }) => (operation['parameters'] as unknown[])[0]);
+    assert.deepEqual(first, parameters.Limit);
+    assert.notEqual(first, second);
+  });
+
+  it('names the operation when a reference cannot be resolved', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['#/components/parameters/Missing', /GET \/a: parameter reference not found/],
+      ['#/components/schemas/Id', /GET \/a: unsupported parameter reference/],
+      ['other.yaml#/components/parameters/Id', /GET \/a: unsupported parameter reference/],
+    ];
+    for (const [target, message] of cases) {
+      assert.throws(
+        () => load({ '/a': { get: op({ parameters: [{ $ref: target }] }) } }),
+        message,
+        target,
+      );
+    }
+    assert.throws(
+      () =>
+        load(
+          { '/a': { get: op({ parameters: [ref('Alias')] }) } },
+          { Alias: ref('Id'), ...parameters },
+        ),
+      /GET \/a: parameter reference points at another reference/,
+    );
   });
 });

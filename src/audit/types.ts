@@ -50,7 +50,7 @@ export type AuditSummary = {
 };
 
 export type AuditReport = {
-  tool: { name: string; version: string; phase: string };
+  tool: { name: string; version: string };
   spec: {
     path: string;
     format: 'json' | 'yaml';

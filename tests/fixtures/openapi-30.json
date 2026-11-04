@@ -83,7 +83,7 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "host": { "type": "string", "format": "hostname" },
+                  "host": { "type": "string", "format": "ipv4" },
                   "ghost": { "$ref": "#/components/schemas/Missing" }
                 }
               }

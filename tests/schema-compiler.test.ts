@@ -59,6 +59,23 @@ describe('schema compiler: primitive types', () => {
     );
   });
 
+  it('validates the hostname format as an RFC 1123 hostname', () => {
+    const hostname = compilerFor()({
+      source: { type: 'string', format: 'hostname' },
+      location: '#',
+    });
+    for (const value of ['example.com', 'a-b.example.co.uk', 'localhost', 'xn--bcher-kva.example'])
+      assert.equal(hostname.safeParse(value).success, true, value);
+    for (const value of [
+      '',
+      'has space.com',
+      '-leading.example',
+      'under_score.example',
+      'a'.repeat(64) + '.com',
+    ])
+      assert.equal(hostname.safeParse(value).success, false, value);
+  });
+
   it('rejects an unsupported string format', () => {
     const compile = compilerFor();
     assert.throws(

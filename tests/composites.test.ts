@@ -373,7 +373,7 @@ describe('composite tools (read-only)', () => {
     );
   });
 
-  it('rejects governed write composites until that phase is approved', async () => {
+  it('rejects governed write composites until governed writes are approved', async () => {
     // A type annotation would normally catch this; keep the guard for JavaScript modules.
     const guarded = {
       ...reviewUser,

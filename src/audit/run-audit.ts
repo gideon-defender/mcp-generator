@@ -50,7 +50,7 @@ function summarize({
 }
 
 /**
- * Phase 0 audit: inventory every operation and catalogue everything that
+ * Audit: inventory every operation and catalogue everything that
  * prevents (or conditions) faithful MCP generation from this spec.
  * Works with any OpenAPI 3.0.x or 3.1.x document, JSON or YAML.
  */
@@ -153,7 +153,7 @@ export async function runAudit({
     (loaded.document['paths'] as Record<string, unknown> | undefined) ?? {},
   ).filter((path) => !path.startsWith('x-')).length;
   const report: AuditReport = {
-    tool: { name: TOOL_NAME, version: TOOL_VERSION, phase: '0-audit' },
+    tool: { name: TOOL_NAME, version: TOOL_VERSION },
     spec: {
       path: specPath,
       format: loaded.format,

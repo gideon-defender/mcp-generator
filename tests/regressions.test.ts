@@ -105,7 +105,7 @@ describe('review regressions', () => {
         '/v1/a': {
           get: jsonResponse({
             type: 'object',
-            $defs: { Bad: { type: 'string', format: 'hostname' } },
+            $defs: { Bad: { type: 'string', format: 'ipv4' } },
           }),
         },
       },
@@ -186,7 +186,7 @@ describe('review regressions', () => {
           responses: {
             Bad: {
               description: 'x',
-              content: { 'application/json': { schema: { type: 'string', format: 'hostname' } } },
+              content: { 'application/json': { schema: { type: 'string', format: 'ipv4' } } },
             },
           },
         },
@@ -391,7 +391,7 @@ describe('review regressions', () => {
     const booleans = report.findings.filter((finding) => finding.code === 'SPEC31_BOOLEAN_SCHEMA');
     assert.equal(booleans.length, 1);
     assert.equal(booleans[0]?.severity, 'compat31');
-    // Phase 3: type null is now natively supported, marked as 'info'
+    // Type null is natively supported, marked as 'info'
     const nulls = report.findings.filter((finding) => finding.code === 'SPEC31_TYPE_NULL');
     assert.equal(nulls.length, 1);
     assert.equal(nulls[0]?.severity, 'info');
@@ -410,7 +410,7 @@ describe('review regressions', () => {
       '  schemas:',
       '    Bad: &bad',
       '      type: string',
-      '      format: hostname',
+      '      format: ipv4',
       'paths:',
       '  /v1/a:',
       '    get:',
@@ -621,7 +621,7 @@ describe('review regressions', () => {
                 'X-Missing': { $ref: '#/components/headers/Missing' },
                 'X-Bad': {
                   content: {
-                    'application/json': { schema: { type: 'string', format: 'hostname' } },
+                    'application/json': { schema: { type: 'string', format: 'ipv4' } },
                   },
                 },
               },

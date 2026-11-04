@@ -4,7 +4,7 @@ import { createSchemaCompiler } from '../src/schema/compiler.js';
 import { compileTools } from '../src/tools.js';
 import type { JsonObject } from '../src/openapi/metadata.js';
 
-describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
+describe('OpenAPI 3.1 Schema Support', () => {
   describe('type arrays (nullable form)', () => {
     it('compiles type array with string and null', () => {
       const doc: JsonObject = { components: { schemas: {} } };
@@ -203,7 +203,7 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
     });
   });
 
-  describe('combined phase 3 features', () => {
+  describe('combined 3.1 features', () => {
     it('combines type array with const', () => {
       const doc: JsonObject = { components: { schemas: {} } };
       const compile = createSchemaCompiler(doc);
@@ -479,7 +479,7 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
     });
   });
 
-  describe('Phase 4: Unimplemented keywords error handling', () => {
+  describe('Unimplemented keywords error handling', () => {
     const compileSource = (source: JsonObject) =>
       createSchemaCompiler({ components: { schemas: {} } })({
         source,
@@ -898,9 +898,8 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
       );
       assert.throws(() => compileSource({ type: 'object', propertyNames: 'x' }), /propertyNames/);
       assert.throws(
-        () =>
-          compileSource({ type: 'object', propertyNames: { type: 'string', format: 'hostname' } }),
-        /unsupported format hostname/,
+        () => compileSource({ type: 'object', propertyNames: { type: 'string', format: 'ipv4' } }),
+        /unsupported format ipv4/,
       );
     });
 
@@ -980,7 +979,7 @@ describe('Phase 3: OpenAPI 3.1 Schema Support', () => {
   });
 });
 
-describe('Phase 4: boolean if/then/else', () => {
+describe('Boolean if/then/else', () => {
   const compileSource = (source: JsonObject) =>
     createSchemaCompiler({ components: { schemas: {} } })({
       source,
@@ -1064,7 +1063,7 @@ describe('Phase 4: boolean if/then/else', () => {
   });
 });
 
-describe('Phase 4: schemas survive tool compilation', () => {
+describe('Schemas survive tool compilation', () => {
   const toolFor = (schema: JsonObject) =>
     compileTools({
       source: {
