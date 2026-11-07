@@ -33,6 +33,9 @@ Products consume the generator; they do not live in it.
 - **Authentication and hosted serving.** An auth adapter SPI, OAuth (JWT/JWKS)
   validation, and hosted Streamable HTTP / SSE serving. See
   [Authentication and Hosted Serving](#authentication-and-hosted-serving).
+- **Multiple APIs in one endpoint.** Compile independent specs into namespaced tools
+  with fixed per-API upstream destinations using `createMultiApiServerFactory`.
+  See [Multiple APIs](#multiple-apis).
 - **Read-only composite tools.** Product-authored named tools that combine visible
   read-only operations through a strict `callTool` gateway. `build` and `start` accept a
   compiled composite module. Governed write composites are not available yet. See
@@ -160,15 +163,15 @@ this generator's `start` and generated `server.mjs` cover less:
 | Flags        | `--port`, `--transport`, `--tool-annotations`, `--server-index`, `--log-level`, `--env`, `--disable-static-auth`, `--help`/`--version` | `--spec`, `--overlay`, `--name`, `--version`, `--server-url`, `--tool`, `--mode`, `--apikey`/`--bearer`, `--timeout`, `--hosted`, `--transport`, `--port`, `--host`, `--allowed-origin`, `--oauth-*`; no `--tool-annotations`, `--server-index`, `--log-level` or `--env` |
 | Credentials  | `--apikey`, then `OPENCOMP_APIKEY`; per-request `apikey` header over HTTP                                                              | stdio: `--apikey`/`--bearer` or `MCP_GENERATOR_APIKEY`/`MCP_GENERATOR_BEARER_TOKEN`; hosted: per-request OAuth bearer token only (no `apikey` header, no static fallback)                                                                                                 |
 | Lifecycle    | SIGTERM/SIGINT close the server; startup errors are sanitized so credential flags never reach stderr                                   | hosted servers close on SIGTERM/SIGINT; stdio has no signal handling                                                                                                                                                                                                      |
-| Hosted mode  | `--hosted`, `--public-url`, bearer validation against the product API, optional OIDC (`MCP_OIDC_*`)                                    | `--hosted` with JWT validation (issuer, audience, JWKS signature, expiry, scopes); no `--public-url`, protected-resource metadata, product-API validation or OIDC discovery                                                                                               |
+| Hosted mode  | `--hosted`, `--public-url`, bearer validation against the product API, optional OIDC (`MCP_OIDC_*`)                                    | `--hosted` with JWT validation (issuer, audience, JWKS signature, expiry, scopes); programmatic protected-resource metadata; CLI has no `--public-url`, product-API validation or OIDC discovery                                                                          |
 | Packaging    | single esbuild bundle (`dist-owned/`) plus MCP bundle manifest                                                                         | `server.mjs` and `package.json`; run `npm install` first (depends on `@gideon/mcp-generator`; hosted builds also add `express` and `jose`)                                                                                                                                |
 | Landing page | branded HTML at `/`                                                                                                                    | none (product-specific)                                                                                                                                                                                                                                                   |
 
 `createOwnedServer` accepts `annotationFilter`, and `serverIndex` is an `ApiOptions`
 field, but `start` exposes neither as a flag. Still missing before OpenComp can adopt
 this package: those flags, logging and `--env` handling, the per-request `apikey`
-header, product-API or OIDC token validation, protected-resource metadata, and
-stdio signal handling.
+header, product-API or OIDC token validation, CLI protected-resource configuration,
+and stdio signal handling.
 
 ## Specification requirements and limits
 
@@ -681,6 +684,41 @@ A config-driven build produces a hosted server when the config sets both `auth` 
 
 The public auth SPI exports `AuthAdapter`, static adapters, OAuth adapters, and hosted serving helpers from the package entrypoint. OAuth verification validates issuer, exact audience, signature, expiry, and required scopes. The upstream bearer option (`--oauth-forward-token`, `auth.upstreamBearerToken`) is off by default because it sends a token issued for the MCP server to the API; enable it only when the API accepts that audience. Without it, the token must carry an `api_key` claim, and callers without one receive 403.
 
+Programmatic hosted services can supply RFC 9728 protected-resource metadata:
+
+```ts
+const hosted = await createHostedServer({
+  createServerForSession,
+  authAdapter,
+  transport: 'http',
+  port: 3000,
+  protectedResource: {
+    resource: 'https://mcp.example.com/mcp',
+    authorizationServers: ['https://issuer.example.com'],
+    scopesSupported: ['tools.read'],
+  },
+  allowedOrigins: ['https://client.example.com'],
+});
+```
+
+This publishes public metadata at `/.well-known/oauth-protected-resource/mcp`
+and the root alias, adds the canonical `resource_metadata` Bearer challenge, and
+requires the configured resource Host. Forwarded host/proto headers do not establish
+authority. HTTPS is required except for loopback development URLs. Browser requests
+get CORS preflight and challenge-header exposure for allowed origins; metadata is
+readable cross-origin. Bearer tokens in query strings are rejected. Authentication
+adapters can return 503 for identity-provider outages and `insufficient_scope` for
+scope challenges. These metadata options are also supported by `runHosted`; the
+single-spec CLI/config builder does not yet expose them.
+
+Scope challenges use the auth adapter's `requiredScopes` response field. The built-in
+OAuth adapter supplies its configured required scopes. Supported scopes remain in
+metadata; they do not become required scopes in challenges.
+
+Provider-specific tenant/client checks and live session/delegated permission checks
+belong in the consuming product's auth adapter. Advertise only scopes that its
+authorization server actually issues and its resource server enforces.
+
 ## Read-only Composite Tools
 
 Product-authored tools can compose MCP operations without forking the generator.
@@ -736,3 +774,52 @@ Safety rules enforced by the runtime:
 - If a composite throws, callers receive `Composite tool <name> failed.` rather than internal details. Unhandled API and configuration errors use existing generic messages.
 - A composite may make at most 25 subcalls per MCP request. Calls beyond the limit fail with an error result, so one request cannot consume unbounded upstream quota.
 - At startup, invalid definitions fail the whole server/build; nothing is silently dropped.
+
+## Multiple APIs
+
+Product services can serve several independent OpenAPI contracts on one MCP endpoint
+without merging their paths or component schemas. Use the programmatic factory:
+
+```ts
+import { createMultiApiServerFactory, createHostedServer } from '@gideon/mcp-generator';
+
+const createServerForSession = createMultiApiServerFactory({
+  name: 'operations',
+  version: '1.0.0',
+  apis: [
+    { id: 'accounts', source: accountsSpec, overlay: accountsOverlay, serverUrl: accountsUrl },
+    { id: 'devices', source: devicesSpec, overlay: devicesOverlay, serverUrl: devicesUrl },
+  ],
+  mode: 'dynamic',
+  transport: 'http',
+  authAdapter,
+  annotationFilter: { readOnlyHint: true },
+});
+const hosted = await createHostedServer({
+  createServerForSession,
+  authAdapter,
+  transport: 'http',
+  port: 3000,
+});
+await hosted.listen();
+```
+
+The factory compiles each API once and creates isolated MCP server instances for
+requests or sessions. `createMultiApiServer(options)` is the convenience form for
+a single instance. The existing `createOwnedServer` interface is unchanged.
+
+Tools get the prefix `<api.id>-`, including explicit overlay names. Namespaces must
+be unique lowercase kebab-case identifiers beginning with a letter. Final names
+must be unique and at most 64 characters; pin shorter names in product overlays
+when necessary. Overlapping paths, operation IDs, and schema names across APIs
+remain independent. Source overlays apply before namespacing; server `allowedTools`
+and composite subcalls use the final namespaced names.
+
+Each API requires an operator-owned `serverUrl`. It wins over source servers,
+operation upstream metadata, and any global `ApiOptions.serverUrl`; callers cannot
+redirect another API's credentials. HTTP(S) destinations may have a base path but
+cannot contain userinfo, query strings, or fragments. Credentials remain resolved
+per invocation and composites retain the selected destination for every subcall.
+
+Product source loading, deployment configuration, and artifact packaging live in
+the consuming service. The CLI/config-driven single-spec builder is unchanged.

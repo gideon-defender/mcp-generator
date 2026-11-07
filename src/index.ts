@@ -28,13 +28,22 @@ export {
   type CompositeRunEnvironment,
   type CompositeToolDefinition,
 } from './composite.js';
-export { createOwnedServer, type ExecutionContext, type AnnotationFilter } from './server.js';
+export {
+  createOwnedServer,
+  createMultiApiServer,
+  createMultiApiServerFactory,
+  type ExecutionContext,
+  type AnnotationFilter,
+  type ServerOptions,
+  type ApiDefinition,
+} from './server.js';
 export { registerDiscovery } from './server/discovery.js';
 export { errorResult, executeRequest, type ApiOptions } from './client.js';
 export { resolveApiCredential } from './credentials.js';
 export type { AuthAdapter, AuthContext, AuthResolution } from './auth/types.js';
 export { staticAuth, rejectUnauthenticated } from './auth/adapters.js';
 export { oauthAuth, type OAuthAuthOptions } from './auth/oauth.js';
+export { trustedOAuthUrl, type ProtectedResourceOptions } from './auth/resource.js';
 export { createHostedServer, type HostedServeOptions } from './serve.js';
 export { runHosted, type ServeOptions } from './cli/serve.js';
 export { McpProjectConfigSchema, type McpProjectConfig } from './config/schema.js';

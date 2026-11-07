@@ -1,5 +1,5 @@
 import type { AuthAdapter } from '../auth/types.js';
-import { createHostedServer } from '../serve.js';
+import { createHostedServer, type HostedServeOptions } from '../serve.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export type ServeOptions = {
@@ -10,6 +10,7 @@ export type ServeOptions = {
   authAdapter?: AuthAdapter;
   maxRequestBodyBytes?: number;
   allowedOrigins?: readonly string[];
+  protectedResource?: HostedServeOptions['protectedResource'];
 };
 
 export async function runHosted(options: ServeOptions): Promise<void> {
@@ -21,6 +22,7 @@ export async function runHosted(options: ServeOptions): Promise<void> {
     ...(options.authAdapter ? { authAdapter: options.authAdapter } : {}),
     ...(options.maxRequestBodyBytes ? { maxRequestBodyBytes: options.maxRequestBodyBytes } : {}),
     ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
+    ...(options.protectedResource ? { protectedResource: options.protectedResource } : {}),
   });
   await hosted.listen();
   const shutdown = async () => {

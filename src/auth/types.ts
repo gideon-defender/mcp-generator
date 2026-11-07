@@ -8,7 +8,15 @@ export type AuthContext = {
 };
 
 export type AuthResolution =
-  { ok: true; apiOptions: ApiOptions } | { ok: false; status: 401 | 403; message: string };
+  | { ok: true; apiOptions: ApiOptions }
+  | {
+      ok: false;
+      status: 401 | 403 | 503;
+      message: string;
+      error?: 'invalid_token' | 'insufficient_scope';
+      /** Scopes required for this request, not the resource's full supported scope list. */
+      requiredScopes?: readonly string[];
+    };
 
 export interface AuthAdapter {
   authenticate(context: AuthContext): Promise<AuthResolution>;
