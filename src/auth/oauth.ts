@@ -28,10 +28,21 @@ export function oauthAuth(options: OAuthAuthOptions): AuthAdapter {
       try {
         ({ payload } = await jwtVerify(token, remoteJwks, { issuer, audience }));
       } catch {
-        return { ok: false, status: 401, message: 'Bearer token is invalid.' };
+        return {
+          ok: false,
+          status: 401,
+          message: 'Bearer token is invalid.',
+          error: 'invalid_token',
+        };
       }
       if (!hasRequiredScopes(payload, options.requiredScopes ?? []))
-        return { ok: false, status: 403, message: 'Required scopes are missing.' };
+        return {
+          ok: false,
+          status: 403,
+          message: 'Required scopes are missing.',
+          error: 'insufficient_scope',
+          requiredScopes: [...(options.requiredScopes ?? [])],
+        };
       const apiOptions = resolveApiOptions({ payload, token, options });
       if (!apiOptions)
         return {

@@ -18,48 +18,107 @@ export type AnnotationFilter = Partial<
   Record<'readOnlyHint' | 'destructiveHint' | 'idempotentHint' | 'openWorldHint', boolean>
 >;
 
+type RoutedTool = CompiledTool & { apiServerUrl?: string };
+type Registry = { tools: RoutedTool[]; servers: string[] };
 type RegistryTool =
-  (CompiledTool & { kind: 'operation'; noInputParameters: boolean }) | CompositeToolEntry;
+  (RoutedTool & { kind: 'operation'; noInputParameters: boolean }) | CompositeToolEntry;
 
 function inputParserOf(tool: RegistryTool) {
   return tool.kind === 'operation' ? tool.plan.input : tool.input;
 }
 
-/** Core wiring only: transports and the CLI live in `cli/start.ts` and the generated server. */
-export function createOwnedServer({
-  name,
-  version,
-  source,
-  overlay,
-  mode = 'static',
-  allowedTools,
-  annotationFilter = {},
-  getOptions,
-  authAdapter,
-  transport = 'stdio',
-  composites,
-}: {
-  /** Product identity, supplied by the caller — the core carries no product branding. */
+export type ServerOptions = {
   name: string;
   version: string;
-  source: unknown;
-  overlay: unknown;
   mode?: 'static' | 'dynamic';
+  /** Names after API namespace prefixes have been applied. */
   allowedTools?: ReadonlySet<string>;
   annotationFilter?: AnnotationFilter;
-  /** Resolve credentials for each call, never a shared hosted-user credential. */
+  /** Resolved independently for every invocation, never cached with the registry. */
   getOptions?: (context: ExecutionContext) => ApiOptions | Promise<ApiOptions>;
-  /** Optional auth adapter to use for credential resolution. */
   authAdapter?: AuthAdapter;
-  /** Transport to use for the API. */
   transport?: 'stdio' | 'http' | 'sse';
-  /**
-   * Product-authored tools that compose existing read-only operations.
-   * Governed write composites are intentionally not accepted yet.
-   */
   composites?: readonly CompositeToolDefinition[];
-}) {
-  const registry = compileTools({ source, overlay });
+};
+
+export type ApiDefinition = {
+  /** Stable lowercase namespace; tool names become `<id>-<operation-tool>`. */
+  id: string;
+  source: unknown;
+  overlay: unknown;
+  /** Operator-owned destination. Overrides spec metadata and credential adapter URLs. */
+  serverUrl: string;
+};
+
+/** Compile independent contracts without merging paths or component schemas. */
+function compileApis(apis: readonly ApiDefinition[]): Registry {
+  if (!apis.length) throw new Error('At least one API is required.');
+  const namespaces = new Set<string>();
+  const names = new Set<string>();
+  const tools: RoutedTool[] = [];
+  for (const api of apis) {
+    if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(api.id) || namespaces.has(api.id))
+      throw new Error(`Invalid or duplicate API namespace: ${api.id}`);
+    namespaces.add(api.id);
+    const url = new URL(api.serverUrl);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error(`Invalid API server URL for ${api.id}`);
+    const registry = compileTools(api);
+    for (const tool of registry.tools) {
+      const name = `${api.id}-${tool.name}`;
+      if (name.length > 64 || !/^[a-zA-Z0-9_.-]+$/.test(name) || names.has(name))
+        throw new Error(`Invalid or duplicate namespaced tool: ${name}`);
+      names.add(name);
+      tools.push({ ...tool, name, apiServerUrl: url.href });
+    }
+  }
+  return { tools, servers: [] };
+}
+
+/** Compile once, then create isolated MCP sessions sharing only immutable tool definitions. */
+export function createMultiApiServerFactory({
+  apis,
+  ...options
+}: ServerOptions & { apis: readonly ApiDefinition[] }): () => McpServer {
+  const registry = compileApis(apis);
+  return () => createRegistryServer(options, registry);
+}
+
+export function createMultiApiServer(
+  options: ServerOptions & { apis: readonly ApiDefinition[] },
+): McpServer {
+  return createMultiApiServerFactory(options)();
+}
+
+/** Existing single-API entry point retains its tool names and server override behavior. */
+export function createOwnedServer({
+  source,
+  overlay,
+  ...options
+}: ServerOptions & { source: unknown; overlay: unknown }) {
+  return createRegistryServer(options, compileTools({ source, overlay }));
+}
+
+function createRegistryServer(
+  {
+    name,
+    version,
+    mode = 'static',
+    allowedTools,
+    annotationFilter = {},
+    getOptions,
+    authAdapter,
+    transport = 'stdio',
+    composites,
+  }: ServerOptions,
+  registry: Registry,
+) {
   const operationTools: RegistryTool[] = registry.tools.map((tool) => ({
     ...tool,
     kind: 'operation',
@@ -138,7 +197,7 @@ export function createOwnedServer({
       return executeRequest({
         tool: entry,
         input: parsedData,
-        options,
+        options: entry.apiServerUrl ? { ...options, serverUrl: entry.apiServerUrl } : options,
         servers: registry.servers,
         signal: context.signal,
       });
@@ -159,7 +218,9 @@ export function createOwnedServer({
       return executeRequest({
         tool: underlying,
         input: underlyingParsed.data,
-        options,
+        options: underlying.apiServerUrl
+          ? { ...options, serverUrl: underlying.apiServerUrl }
+          : options,
         servers: registry.servers,
         signal: context.signal,
       });

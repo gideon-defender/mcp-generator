@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthAdapter } from './auth/types.js';
+import { prepareProtectedResource, type ProtectedResourceOptions } from './auth/resource.js';
 
 export type HostedServeOptions = {
   /** Called once per HTTP request or SSE session; servers are never shared between callers. */
@@ -15,6 +16,7 @@ export type HostedServeOptions = {
   maxRequestBodyBytes?: number;
   allowedOrigins?: readonly string[];
   maxSseSessions?: number;
+  protectedResource?: ProtectedResourceOptions;
 };
 
 export async function createHostedServer(options: HostedServeOptions): Promise<{
@@ -29,9 +31,36 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
   const sessions = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
   app.disable('x-powered-by');
   app.get('/healthz', (_request, response) => response.status(200).json({ status: 'ok' }));
-  app.use(express.json({ limit: options.maxRequestBodyBytes ?? 1_048_576 }));
+  const resource = options.protectedResource
+    ? prepareProtectedResource(options.protectedResource)
+    : undefined;
+  if (resource) {
+    if (!options.authAdapter) throw new Error('Protected resources require an auth adapter.');
+    if (resource.resource.pathname !== (options.transport === 'http' ? '/mcp' : '/sse'))
+      throw new Error('Protected resource URL must match the transport endpoint.');
+    app.use((request, response, next) => {
+      // Ignore forwarded host/proto: only configured public authority is trusted.
+      if (request.headers.host?.toLowerCase() !== resource.resource.host.toLowerCase()) {
+        response.status(403).json({ error: 'Host is not allowed.' });
+        return;
+      }
+      next();
+    });
+    app.get(
+      [...new Set([resource.metadataPath, '/.well-known/oauth-protected-resource'])],
+      (_request, response) => {
+        response
+          .set({ 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=300' })
+          .json(resource.document);
+      },
+    );
+  }
 
-  const allowedOrigins = options.allowedOrigins;
+  const allowedOrigins = options.allowedOrigins?.length
+    ? options.allowedOrigins
+    : resource
+      ? [resource.resource.origin]
+      : undefined;
   if (allowedOrigins?.length) {
     app.use((request, response, next) => {
       const origin = request.headers.origin;
@@ -39,13 +68,35 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
         response.status(403).json({ error: 'Origin is not allowed.' });
         return;
       }
+      if (origin) {
+        response.vary('Origin');
+        response.set({
+          'Access-Control-Allow-Origin': origin,
+          'Access-Control-Expose-Headers': 'WWW-Authenticate, Mcp-Session-Id, MCP-Protocol-Version',
+        });
+      }
       next();
     });
   }
+  app.options(['/mcp', '/sse', '/messages'], (_request, response) => {
+    response
+      .set({
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers':
+          'Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID',
+        'Access-Control-Max-Age': '600',
+      })
+      .status(204)
+      .end();
+  });
 
   if (options.authAdapter) {
     app.use(async (request, response, next) => {
       if (request.path === '/healthz') return next();
+      if ('access_token' in request.query) {
+        response.status(400).json({ error: 'Use the Authorization header for bearer tokens.' });
+        return;
+      }
       try {
         const headers = new Headers();
         for (const [key, value] of Object.entries(request.headers)) {
@@ -57,17 +108,22 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
           transport: options.transport,
         });
         if (!result.ok) {
-          if (result.status === 401) response.set('WWW-Authenticate', 'Bearer');
+          if (result.status === 401 || result.error === 'insufficient_scope')
+            response.set(
+              'WWW-Authenticate',
+              resource ? resource.challenge(result.error, result.requiredScopes) : 'Bearer',
+            );
           response.status(result.status).json({ error: result.message });
           return;
         }
         next();
       } catch {
-        response.set('WWW-Authenticate', 'Bearer');
+        response.set('WWW-Authenticate', resource ? resource.challenge('invalid_token') : 'Bearer');
         response.status(401).json({ error: 'Authentication failed.' });
       }
     });
   }
+  app.use(express.json({ limit: options.maxRequestBodyBytes ?? 1_048_576 }));
 
   if (options.transport === 'http') {
     // Stateless transports handle exactly one request, so each request gets its own server.

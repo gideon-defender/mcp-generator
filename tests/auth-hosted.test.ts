@@ -171,6 +171,8 @@ describe('Auth adapters', () => {
       assert.equal(missingScopeResult.ok, false);
       if (missingScopeResult.ok) throw new Error('expected scope denial');
       assert.equal(missingScopeResult.status, 403);
+      assert.equal(missingScopeResult.error, 'insufficient_scope');
+      assert.deepEqual(missingScopeResult.requiredScopes, ['mcp.tools']);
       const missingBearerResult = await adapter.authenticate({
         headers: new Headers(),
         transport: 'http',
