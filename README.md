@@ -527,15 +527,18 @@ Each `operations` entry has a `path` (starting with `/`), a lowercase `method` a
 `metadata` object. The same fields can be set in the spec under an operation's
 `x-comp-mcp` extension. The overlay is merged on top of it, and the overlay wins.
 
-| Field            | Type                      | Effect                                                                                                                                                |
-| ---------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`           | string                    | The tool name. See [Tool names](#tool-names).                                                                                                         |
-| `disabled`       | boolean                   | `true` removes the operation from the tools.                                                                                                          |
-| `description`    | string                    | Replaces the generated tool description, which is the operation's `summary`, a blank line and `description`.                                          |
-| `classification` | `read` or `mutate`        | Overrides the default classification. See [Classification](#classification).                                                                          |
-| `upstream`       | string                    | The API server for this operation. See [Upstream server](#upstream-server).                                                                           |
-| `redaction`      | `true` or list of strings | Hides response data. See [Redaction](#redaction).                                                                                                     |
-| `accept`         | string                    | The `Accept` header to send. By default it is `application/json` if a response declares it, otherwise the first declared media type, otherwise `*/*`. |
+| Field              | Type                       | Effect                                                                                                                                                |
+| ------------------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | string                     | The tool name. See [Tool names](#tool-names).                                                                                                         |
+| `disabled`         | boolean                    | `true` removes the operation from the tools.                                                                                                          |
+| `description`      | string                     | Replaces the generated tool description, which is the operation's `summary`, a blank line and `description`.                                          |
+| `classification`   | `read` or `mutate`         | Overrides the default classification. See [Classification](#classification).                                                                          |
+| `upstream`         | string                     | The API server for this operation. See [Upstream server](#upstream-server).                                                                           |
+| `redaction`        | `true` or list of strings  | Hides response data. See [Redaction](#redaction).                                                                                                     |
+| `responseFields`   | list of JSON-pointer paths | Retains only approved scalar response leaves; `*` matches array items.                                                                                |
+| `responseMetadata` | boolean                    | Includes sanitized HTTP/request-ID/retry metadata in tool results.                                                                                    |
+| `maxResponseBytes` | integer                    | Caps response bytes; 1024–16777216.                                                                                                                   |
+| `accept`           | string                     | The `Accept` header to send. By default it is `application/json` if a response declares it, otherwise the first declared media type, otherwise `*/*`. |
 
 Empty strings are rejected, and unknown fields are rejected. An operation without an
 `x-comp-mcp` extension is unaffected until the overlay names it.
@@ -590,14 +593,27 @@ can hide every `mutate` tool. Composite tools can call only `read` tools.
 Redaction runs on the response body before the tool returns it.
 
 - `redaction: true` returns `[REDACTED]` and never reads the body.
+- `responseFields: ["/data/*/id", "/next_cursor", ...]` retains only explicitly
+  approved scalar JSON-pointer leaves. `*` matches array items; unknown fields are
+  omitted at every object level. Array wrappers, nulls, and approved pagination
+  fields retain their original shape. Containers cannot pass through a scalar
+  selection. This requires a JSON response; non-JSON, malformed, oversized, or
+  structurally incompatible responses are withheld as tool errors.
+- `maxResponseBytes` caps consumed response bytes (1024–16777216). Projection
+  defaults to a 1 MiB cap when omitted. Products should set a smaller explicit cap.
+- `responseMetadata: true` adds `_meta.upstream` with HTTP status and bounded,
+  sanitized request ID and numeric retry delay when available. Error responses
+  include a fixed status category, and safe request IDs also appear in error text.
+  Raw error bodies, URLs, and arbitrary upstream messages are never exposed.
 - `redaction: [key, ...]` replaces the value of each listed key with `[REDACTED]` at any
   depth in a JSON response. Key names are matched exactly, including case.
-- A body that is not valid JSON, or an image or audio response, returns `[REDACTED]`
-  instead of passing through unmasked.
+- With a `redaction` key list, invalid JSON or image/audio responses return
+  `[REDACTED]` instead of passing through unmasked.
 - An empty body is returned as is.
 
-Upstream error bodies are never returned. A failed request gives only
-`API request failed (HTTP <status>).`. Any copy of the caller's credential in a response
+Upstream error bodies are never returned. By default a failed request gives
+`API request failed (HTTP <status>).`; opt-in response metadata adds safe correlation
+information. Any copy of the caller's credential in a response
 is replaced with `[REDACTED]` for every tool.
 
 ### Upstream server
