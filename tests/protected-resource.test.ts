@@ -209,3 +209,66 @@ it('requires TLS except on loopback and validates protected-resource configurati
   for (const scope of ['bad"scope', 'bad\\scope', 'bad\r\nscope', ''])
     assert.throws(() => resource.challenge('insufficient_scope', [scope]), /Invalid OAuth scope/);
 });
+
+it('binds discovery and routing to an explicit HTTP MCP path', async () => {
+  const options = {
+    createServerForSession: () =>
+      createOwnedServer({
+        name: 'test',
+        version: '1',
+        source: baseSpec({ '/ping': { get: okOperation() } }),
+        overlay: { version: 1, schemas: [], operations: [] },
+      }),
+    port: 0,
+    transport: 'http' as const,
+    mcpPath: '/mcp/chat',
+    protectedResource: {
+      resource: 'https://mcp.example.test/mcp/chat',
+      authorizationServers: ['https://minter.example.test'],
+    },
+    authAdapter: {
+      async authenticate() {
+        return { ok: false as const, status: 401 as const, message: 'Missing' };
+      },
+    },
+  };
+  const hosted = await createHostedServer(options);
+  await hosted.listen();
+  const address = hosted.server.address();
+  assert(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}`;
+  const headers = { host: 'mcp.example.test' };
+  try {
+    const metadata = await httpFetch(`${url}/.well-known/oauth-protected-resource/mcp/chat`, {
+      headers,
+    });
+    assert.equal(metadata.status, 200);
+    const document = (await metadata.json()) as { resource: string };
+    assert.equal(document.resource, options.protectedResource.resource);
+    const denied = await httpFetch(`${url}/mcp/chat`, { method: 'POST', headers });
+    assert.equal(denied.status, 401);
+    assert.match(
+      denied.headers.get('www-authenticate') || '',
+      /oauth-protected-resource\/mcp\/chat/,
+    );
+  } finally {
+    await hosted.close();
+  }
+  await assert.rejects(
+    createHostedServer({ ...options, mcpPath: '/different' }),
+    /match the transport/,
+  );
+  for (const mcpPath of [
+    '/healthz',
+    '/Healthz',
+    '/HEALTHZ',
+    '/sse',
+    '/SSE',
+    '/messages',
+    '/Messages',
+    '/mcp?token=x',
+    '//mcp',
+    '/mcp/../admin',
+  ])
+    await assert.rejects(createHostedServer({ ...options, mcpPath }), /Invalid HTTP MCP path/);
+});

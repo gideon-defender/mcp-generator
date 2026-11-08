@@ -11,6 +11,7 @@ export type ServeOptions = {
   maxRequestBodyBytes?: number;
   allowedOrigins?: readonly string[];
   protectedResource?: HostedServeOptions['protectedResource'];
+  mcpPath?: string;
 };
 
 export async function runHosted(options: ServeOptions): Promise<void> {
@@ -23,6 +24,7 @@ export async function runHosted(options: ServeOptions): Promise<void> {
     ...(options.maxRequestBodyBytes ? { maxRequestBodyBytes: options.maxRequestBodyBytes } : {}),
     ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
     ...(options.protectedResource ? { protectedResource: options.protectedResource } : {}),
+    ...(options.mcpPath ? { mcpPath: options.mcpPath } : {}),
   });
   await hosted.listen();
   const shutdown = async () => {

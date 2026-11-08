@@ -139,7 +139,11 @@ function createRegistryServer(
   // or read-only annotation filter must never be bypassed through a composite.
   const visibleTools = new Map<string, RegistryTool>(tools.map((tool) => [tool.name, tool]));
   const server = new McpServer({ name, version });
-  const resolveOptions = async (context: ExecutionContext): Promise<ApiOptions> => {
+  const resolveOptions = async (
+    context: ExecutionContext,
+    tool: RegistryTool,
+    input: unknown,
+  ): Promise<ApiOptions> => {
     if (authAdapter) {
       const headers = new Headers();
       if (context.requestInfo?.headers) {
@@ -148,11 +152,26 @@ function createRegistryServer(
           else if (Array.isArray(value)) headers.set(key, value.join(','));
         }
       }
-      const resolution = await authAdapter.authenticate({
+      const authContext = {
         headers,
         context,
         transport,
-      });
+      };
+      const authentication = await authAdapter.authenticate(authContext);
+      if (!authentication.ok) throw new Error(authentication.message);
+      const resolution = authAdapter.authorizeTool
+        ? await authAdapter.authorizeTool({
+            ...authContext,
+            input,
+            tool: {
+              name: tool.name,
+              classification: tool.classification,
+              ...(tool.kind === 'operation'
+                ? { operationId: tool.operationId, method: tool.method, path: tool.path }
+                : {}),
+            },
+          })
+        : authentication;
       if (!resolution.ok) throw new Error(resolution.message);
       return resolution.apiOptions;
     }
@@ -189,9 +208,13 @@ function createRegistryServer(
     }
     let options: ApiOptions;
     try {
-      options = await resolveOptions(context);
+      options = await resolveOptions(context, entry, parsedData);
     } catch {
-      return errorResult('API credential configuration failed.');
+      return errorResult(
+        authAdapter?.authorizeTool
+          ? 'Tool authorization failed.'
+          : 'API credential configuration failed.',
+      );
     }
     if (entry.kind === 'operation') {
       return executeRequest({
@@ -215,12 +238,20 @@ function createRegistryServer(
         return errorResult(`Tool ${toolName} is not available to read-only composite tools.`);
       const underlyingParsed = inputParserOf(underlying).safeParse(toolInput);
       if (!underlyingParsed.success) return errorResult(`Invalid input for tool ${toolName}.`);
+      let subcallOptions = options;
+      if (authAdapter?.authorizeTool) {
+        try {
+          subcallOptions = await resolveOptions(context, underlying, underlyingParsed.data);
+        } catch {
+          return errorResult('Tool authorization failed.');
+        }
+      }
       return executeRequest({
         tool: underlying,
         input: underlyingParsed.data,
         options: underlying.apiServerUrl
-          ? { ...options, serverUrl: underlying.apiServerUrl }
-          : options,
+          ? { ...subcallOptions, serverUrl: underlying.apiServerUrl }
+          : subcallOptions,
         servers: registry.servers,
         signal: context.signal,
       });
