@@ -127,7 +127,7 @@ function withOperatorOptions({
   operatorOptions: ApiOptions;
 }): AuthAdapter | undefined {
   if (!adapter || Object.keys(operatorOptions).length === 0) return adapter;
-  return {
+  const wrapped: AuthAdapter = {
     async authenticate(authContext) {
       const resolution = await adapter.authenticate(authContext);
       return resolution.ok
@@ -135,4 +135,13 @@ function withOperatorOptions({
         : resolution;
     },
   };
+  if (adapter.authorizeTool) {
+    wrapped.authorizeTool = async (context) => {
+      const resolution = await adapter.authorizeTool!(context);
+      return resolution.ok
+        ? { ok: true, apiOptions: { ...operatorOptions, ...resolution.apiOptions } }
+        : resolution;
+    };
+  }
+  return wrapped;
 }

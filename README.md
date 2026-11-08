@@ -839,3 +839,23 @@ per invocation and composites retain the selected destination for every subcall.
 
 Product source loading, deployment configuration, and artifact packaging live in
 the consuming service. The CLI/config-driven single-spec builder is unchanged.
+
+### Authorizing individual tool calls
+
+Custom `AuthAdapter`s may implement `authorizeTool(context)` in addition to
+`authenticate(context)`. The additional gate runs after authentication and schema
+normalization, before any upstream request. It receives the actual tool name,
+classification, operation/method/path metadata, normalized input, request headers
+and execution context. Return an `AuthResolution`; denial or an exception prevents
+execution. A successful resolution supplies that call's upstream credentials.
+
+This gate covers static tools, dynamic `execute_tool` calls and every underlying
+composite subcall. Composite definitions are also authorized before their code
+runs. Discovery does not consume per-call authorization. Adapters that do not
+implement the hook retain the existing authentication behavior. Product adapters
+are responsible for binding claims to the normalized call and enforcing replay
+policy. The generator does not infer business permissions from authentication.
+
+`createHostedServer` also accepts an explicit `mcpPath` for HTTP listeners (default
+`/mcp`). A configured protected resource must match that path. This supports
+separate product endpoints such as `/mcp/chat` with independent authentication.

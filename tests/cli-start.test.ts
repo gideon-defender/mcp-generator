@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, open, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { MAX_COMPOSITE_MODULE_BYTES } from '../src/composite.js';
 
@@ -210,6 +210,58 @@ export const composites = [
 });
 
 describe('CLI start command: end-to-end', () => {
+  for (const operatorOptions of [
+    { serverUrl: 'https://operator.example.test' },
+    { timeoutMs: 1000 },
+  ])
+    it(`preserves tool authorization with ${Object.keys(operatorOptions)[0]}`, async () => {
+      const spec = await writeSpec();
+      const script = `
+import assert from 'node:assert/strict';
+import { runStart } from ${JSON.stringify(pathToFileURL(resolve(repoRoot, 'src/cli/start.ts')).href)};
+let calls = 0;
+const adapter = {
+  async authenticate() {
+    return { ok: true, apiOptions: { bearerToken: 'authentication-only', fetch: async () => {
+      throw new Error('Authentication credentials must not execute calls');
+    } } };
+  },
+  async authorizeTool(context) {
+    assert.equal(this, adapter);
+    assert.equal(context.tool.name, 'ping');
+    calls++;
+    if (calls === 1) return { ok: false, status: 403, message: 'Denied' };
+    if (calls === 3) throw new Error('Authorization unavailable');
+    return { ok: true, apiOptions: { bearerToken: 'authorized-call', fetch: async (url, init) => {
+      assert.equal(String(url), ${JSON.stringify(`${'serverUrl' in operatorOptions ? operatorOptions.serverUrl : 'https://api.example.test'}/ping`)});
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer authorized-call');
+      return new Response('{"authorized":true}');
+    } } };
+  },
+};
+await runStart({ specPath: ${JSON.stringify(spec)}, name: 'test', version: '1',
+  ...${JSON.stringify(operatorOptions)}, authAdapter: adapter });
+`;
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: ['--import', 'tsx', '--input-type=module', '-e', script],
+        cwd: repoRoot,
+        stderr: 'pipe',
+      });
+      const client = new Client({ name: 'startup-authorization-test', version: '1' });
+      try {
+        await client.connect(transport, { timeout: 15_000 });
+        assert.equal((await client.callTool({ name: 'ping', arguments: {} })).isError, true);
+        const result = await client.callTool({ name: 'ping', arguments: {} });
+        assert.notEqual(result.isError, true);
+        assert.deepEqual(result.content, [{ type: 'text', text: '{"authorized":true}' }]);
+        assert.equal((await client.callTool({ name: 'ping', arguments: {} })).isError, true);
+      } finally {
+        await client.close();
+        await transport.close();
+      }
+    });
+
   it('serves a real MCP tool over stdio for a minimal spec', async () => {
     const spec = await writeSpec();
     const transport = new StdioClientTransport({

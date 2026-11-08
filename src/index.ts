@@ -40,7 +40,7 @@ export {
 export { registerDiscovery } from './server/discovery.js';
 export { errorResult, executeRequest, type ApiOptions } from './client.js';
 export { resolveApiCredential } from './credentials.js';
-export type { AuthAdapter, AuthContext, AuthResolution } from './auth/types.js';
+export type { AuthAdapter, AuthContext, AuthToolContext, AuthResolution } from './auth/types.js';
 export { staticAuth, rejectUnauthenticated } from './auth/adapters.js';
 export { oauthAuth, type OAuthAuthOptions } from './auth/oauth.js';
 export { trustedOAuthUrl, type ProtectedResourceOptions } from './auth/resource.js';

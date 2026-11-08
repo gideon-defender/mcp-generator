@@ -17,6 +17,8 @@ export type HostedServeOptions = {
   allowedOrigins?: readonly string[];
   maxSseSessions?: number;
   protectedResource?: ProtectedResourceOptions;
+  /** Explicit HTTP endpoint for an independently authenticated product listener. */
+  mcpPath?: string;
 };
 
 export async function createHostedServer(options: HostedServeOptions): Promise<{
@@ -28,6 +30,13 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535)
     throw new Error('--port must be an integer between 0 and 65535');
   const app = express();
+  const mcpPath = options.mcpPath ?? '/mcp';
+  if (
+    !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(mcpPath) ||
+    ['/healthz', '/sse', '/messages'].includes(mcpPath.toLowerCase()) ||
+    (options.transport !== 'http' && mcpPath !== '/mcp')
+  )
+    throw new Error('Invalid HTTP MCP path.');
   const sessions = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
   app.disable('x-powered-by');
   app.get('/healthz', (_request, response) => response.status(200).json({ status: 'ok' }));
@@ -36,7 +45,7 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
     : undefined;
   if (resource) {
     if (!options.authAdapter) throw new Error('Protected resources require an auth adapter.');
-    if (resource.resource.pathname !== (options.transport === 'http' ? '/mcp' : '/sse'))
+    if (resource.resource.pathname !== (options.transport === 'http' ? mcpPath : '/sse'))
       throw new Error('Protected resource URL must match the transport endpoint.');
     app.use((request, response, next) => {
       // Ignore forwarded host/proto: only configured public authority is trusted.
@@ -78,7 +87,7 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
       next();
     });
   }
-  app.options(['/mcp', '/sse', '/messages'], (_request, response) => {
+  app.options([mcpPath, '/sse', '/messages'], (_request, response) => {
     response
       .set({
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -127,7 +136,7 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
 
   if (options.transport === 'http') {
     // Stateless transports handle exactly one request, so each request gets its own server.
-    app.post('/mcp', async (request, response) => {
+    app.post(mcpPath, async (request, response) => {
       const requestServer = options.createServerForSession();
       const transport = new StreamableHTTPServerTransport({
         enableJsonResponse: true,
@@ -137,7 +146,7 @@ export async function createHostedServer(options: HostedServeOptions): Promise<{
       await requestServer.connect(transport);
       await transport.handleRequest(request, response, request.body);
     });
-    app.all('/mcp', (_request, response) => {
+    app.all(mcpPath, (_request, response) => {
       response.set('Allow', 'POST').status(405).json({ error: 'Method not allowed.' });
     });
   } else {
