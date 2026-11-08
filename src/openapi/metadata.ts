@@ -11,6 +11,14 @@ export const metadataSchema = z
     classification: z.enum(['read', 'mutate']).optional(),
     upstream: z.string().min(1).optional(),
     redaction: z.union([z.boolean(), z.array(z.string().min(1))]).optional(),
+    /** Scalar JSON-pointer leaves to retain; wildcards match array items only. */
+    responseFields: z
+      .array(z.string().regex(/^\/(?:[^~/]|~[01])+(?:\/(?:[^~/]|~[01])+)*$/))
+      .min(1)
+      .optional(),
+    /** Preserve bounded, sanitized response status/request-ID/retry metadata. */
+    responseMetadata: z.boolean().optional(),
+    maxResponseBytes: z.number().int().min(1024).max(16_777_216).optional(),
     /** Overrides the Accept header derived from the declared response media types. */
     accept: z.string().min(1).optional(),
   })
